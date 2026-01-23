@@ -21,8 +21,11 @@ export interface Quiz {
   published: boolean;
   gateResults: boolean; // Stripe Paywall
   price: number;
+  discountEnabled?: boolean;
+  originalPrice?: number;
   questions: Question[];
   image?: string;
+  views?: number; // Total landing page views
 }
 
 export interface Submission {
@@ -32,7 +35,10 @@ export interface Submission {
   score: number;
   email?: string;
   paid: boolean;
-  completedAt: string;
+  status: 'started' | 'completed';
+  lastQuestionId?: string;
+  completedAt?: string;
+  startedAt: string;
 }
 
 // Seed Data
@@ -51,7 +57,10 @@ export const MOCK_QUIZZES: Quiz[] = [
     published: true,
     gateResults: true,
     price: 49.99,
+    discountEnabled: true,
+    originalPrice: 99.99,
     image: 'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&q=80&w=1000',
+    views: 1240,
     questions: [
       {
         id: 'q1',
@@ -85,6 +94,7 @@ export const MOCK_QUIZZES: Quiz[] = [
     gateResults: false,
     price: 0,
     image: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&q=80&w=1000',
+    views: 850,
     questions: [
       {
         id: 'q1',
@@ -107,12 +117,14 @@ export const MOCK_QUIZZES: Quiz[] = [
     published: false,
     gateResults: false,
     price: 0,
+    views: 45,
     questions: []
   }
 ];
 
 export const MOCK_SUBMISSIONS: Submission[] = [
-  { id: 'sub-1', quizId: 'quiz-1', answers: {}, score: 85, email: 'test@example.com', paid: true, completedAt: '2023-10-25T10:00:00Z' },
-  { id: 'sub-2', quizId: 'quiz-1', answers: {}, score: 40, email: 'lead@example.com', paid: false, completedAt: '2023-10-26T14:30:00Z' },
-  { id: 'sub-3', quizId: 'quiz-2', answers: {}, score: 100, email: 'customer@gmail.com', paid: true, completedAt: '2023-10-27T09:15:00Z' },
+  { id: 'sub-1', quizId: 'quiz-1', answers: { q1: 'opt1', q2: 'opt1' }, score: 85, email: 'test@example.com', paid: true, status: 'completed', startedAt: '2023-10-25T09:50:00Z', completedAt: '2023-10-25T10:00:00Z' },
+  { id: 'sub-2', quizId: 'quiz-1', answers: { q1: 'opt2' }, score: 40, email: 'lead@example.com', paid: false, status: 'started', lastQuestionId: 'q2', startedAt: '2023-10-26T14:20:00Z' },
+  { id: 'sub-3', quizId: 'quiz-2', answers: { q1: 'opt3' }, score: 100, email: 'customer@gmail.com', paid: true, status: 'completed', startedAt: '2023-10-27T09:10:00Z', completedAt: '2023-10-27T09:15:00Z' },
+  { id: 'sub-4', quizId: 'quiz-1', answers: { q1: 'opt1', q2: 'opt1' }, score: 90, email: 'vip@corp.com', paid: true, status: 'completed', startedAt: '2023-10-28T11:00:00Z', completedAt: '2023-10-28T11:15:00Z' },
 ];

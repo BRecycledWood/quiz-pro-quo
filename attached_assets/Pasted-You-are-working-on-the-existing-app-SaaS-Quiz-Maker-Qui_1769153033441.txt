@@ -1,0 +1,71 @@
+You are working on the existing app “SaaS-Quiz-Maker / Quiz Pro Quo”. Implement the following upgrades. Do NOT leave placeholders—wire everything end-to-end using the app’s current data layer (mock data is fine if no backend yet, but the UI must be fully functional). Preserve the current visual style but make it feel like a premium SaaS.
+
+A) MAIN MARKETING LANDING PAGE (HOMEPAGE) — “BEEF UP 1000%”
+Goal: sell that Quiz Pro Quo is a premium platform AND that we build dashboards/quizzes for clients, so the homepage must ROCK.
+- New hero: strong headline + subheadline + primary CTA (“View Demo Dashboard” / “Create a Quiz”) + secondary CTA (“See Example Quizzes”).
+- Add sections:
+  1) Value props (3–5 cards)
+  2) “What you can build” use-case grid (lead qualification, compliance, product recommender, underwriting, onboarding, etc.)
+  3) Feature stack (Landing Pages, Quiz Builder, Branching, Scoring/Outcomes, Results Pages, PDFs, Stripe Paywall Toggle, White Label)
+  4) “How it works” (3 steps)
+  5) Proof-style metrics strip (template counts, time-to-launch, conversion uplift—can be reasonable placeholders but presented cleanly)
+  6) CTA band at bottom
+- Make it look like a funded SaaS: crisp spacing, better copy density, more structure, and a “dashboard company” vibe.
+
+B) DASHBOARD SYSTEM (REAL, NOT A LIST)
+Create:
+1) Main Dashboard (aggregated across all quizzes)
+   - Total quizzes
+   - Total submissions
+   - Total revenue
+   - Avg completion rate
+   - Revenue per visitor
+   - Outcome distribution
+   - Recent activity feed (recent submissions)
+   - Top quiz + worst drop-off quiz
+2) Individual Quiz Dashboard page
+   - Visits, Starts, Completions, Completion rate
+   - Drop-off per question
+   - Avg completion time
+   - Outcome breakdown
+   - Revenue, Conversion rate, Revenue per visitor
+   - Lead capture rate
+   - Recent submissions table
+3) Compare Quizzes view
+   - Select 2+ quizzes and compare side-by-side: completion rate, revenue, conversion, drop-off, outcome distribution
+4) Add A/B testing scaffold (EXTRA EXTRAS placeholder only)
+   - UI structure for variants A/B but clearly labeled “Coming soon” (no functional split testing required yet)
+
+C) QUIZ BUILDER — MUST BE FULLY EDITABLE
+Fix all current issues:
+- “Save changes” must work (persist to state/store; if there’s no backend, store in localStorage so refresh keeps changes).
+- “Preview” must work (opens the published/public quiz view with current draft config).
+- Must be able to add/edit/delete:
+  - Questions
+  - Answer options (add unlimited answer options)
+- Question text input MUST be a large multi-line textarea so the full question is visible.
+- Answer option inputs should be comfortable (not tiny).
+- Add Stripe paywall ON/OFF toggle per quiz (works end-to-end).
+- Add Discount toggle:
+  - If enabled, show “original price” input.
+  - Display original price with strikethrough next to current price in the quiz landing page and checkout/paywall UI.
+- PDF section:
+  - Allow editing at least: report title + disclaimer text.
+  - Keep the section visually clean.
+
+D) QUIZ PUBLIC LANDING PAGE (per quiz) — add more info
+- Keep the current look/feel.
+- Include: published badge, number of questions, estimated completion time, price (with discount display if enabled), short description, optional category tags.
+
+E) ANALYTICS + SETTINGS — make them actually work
+- Analytics: reflect real computed metrics from stored submissions (even if stored locally).
+- Settings: organization / branding settings should be editable and reflected across the public pages (logo/colors where applicable).
+
+F) DATA + STORAGE REQUIREMENTS (if no backend yet)
+- Use a simple persistence strategy so changes don’t vanish:
+  - quizzes, questions, answers, settings saved to localStorage.
+  - submissions saved to localStorage.
+- All dashboards/analytics must compute from the stored submissions.
+
+Acceptance criteria:
+- I can create/edit a quiz fully (questions + answers + scoring + pricing + discount + paywall toggle + PDF title/disclaimer), save it, preview it, publish it, take it as a user, see results, and then see analytics update across the main dashboard and quiz dashboard.

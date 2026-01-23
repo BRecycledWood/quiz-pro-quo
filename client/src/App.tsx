@@ -8,6 +8,8 @@ import Home from "@/pages/Home";
 import Dashboard from "@/pages/admin/Dashboard";
 import QuizList from "@/pages/admin/QuizList";
 import QuizBuilder from "@/pages/admin/QuizBuilder";
+import QuizDashboard from "@/pages/admin/QuizDashboard";
+import CompareQuizzes from "@/pages/admin/CompareQuizzes";
 import QuizRunner from "@/pages/public/QuizRunner";
 
 function Router() {
@@ -18,7 +20,10 @@ function Router() {
       {/* Admin Routes */}
       <Route path="/admin" component={Dashboard} />
       <Route path="/admin/quizzes" component={QuizList} />
+      <Route path="/admin/quizzes/compare" component={CompareQuizzes} />
+      <Route path="/admin/quizzes/new" component={() => <QuizBuilder isNew />} />
       <Route path="/admin/quizzes/:id" component={QuizBuilder} />
+      <Route path="/admin/quiz/:id/dashboard" component={QuizDashboard} />
       
       {/* Public Routes */}
       <Route path="/quiz/:slug" component={QuizRunner} />
