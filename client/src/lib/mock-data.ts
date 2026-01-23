@@ -5,11 +5,38 @@ export interface Organization {
   logo?: string;
 }
 
+export type QuestionType = 'single' | 'multiple' | 'yes_no' | 'short_text' | 'long_text' | 'number' | 'percent' | 'scale';
+
+export interface BranchingRule {
+  id: string;
+  condition: 'equals' | 'not_equals' | 'greater_than' | 'less_than' | 'contains';
+  value: any;
+  nextQuestionId: string;
+}
+
+export interface CalculatedField {
+  id: string;
+  name: string;
+  variable: string;
+  formula: string; 
+}
+
+export interface KnockoutRule {
+  id: string;
+  name: string;
+  logic: string; // e.g. "risk_score > 50"
+  message: string;
+}
+
 export interface Question {
   id: string;
   text: string;
-  type: 'single' | 'multiple' | 'text' | 'rating';
-  options?: { id: string; text: string; value: number; nextQuestionId?: string }[];
+  type: QuestionType;
+  variableName?: string;
+  options?: { id: string; text: string; value: number }[];
+  branchingRules?: BranchingRule[];
+  min?: number;
+  max?: number;
 }
 
 export interface Quiz {
@@ -24,6 +51,8 @@ export interface Quiz {
   discountEnabled?: boolean;
   originalPrice?: number;
   questions: Question[];
+  calculatedFields?: CalculatedField[];
+  knockoutRules?: KnockoutRule[];
   image?: string;
   views?: number; // Total landing page views
 }
@@ -35,10 +64,11 @@ export interface Submission {
   score: number;
   email?: string;
   paid: boolean;
-  status: 'started' | 'completed';
+  status: 'started' | 'completed' | 'knocked_out';
   lastQuestionId?: string;
   completedAt?: string;
   startedAt: string;
+  knockoutMessage?: string;
 }
 
 // Seed Data
@@ -66,6 +96,7 @@ export const MOCK_QUIZZES: Quiz[] = [
         id: 'q1',
         text: 'Does your organization have a dedicated Data Protection Officer?',
         type: 'single',
+        variableName: 'has_dpo',
         options: [
           { id: 'opt1', text: 'Yes', value: 10 },
           { id: 'opt2', text: 'No', value: 0 },
@@ -76,12 +107,19 @@ export const MOCK_QUIZZES: Quiz[] = [
         id: 'q2',
         text: 'How often do you conduct security audits?',
         type: 'single',
+        variableName: 'audit_freq',
         options: [
           { id: 'opt1', text: 'Quarterly', value: 10 },
           { id: 'opt2', text: 'Annually', value: 5 },
           { id: 'opt3', text: 'Never', value: 0 },
         ]
       }
+    ],
+    calculatedFields: [
+      { id: 'cf1', name: 'Risk Ratio', variable: 'risk_ratio', formula: 'audit_freq / 10' }
+    ],
+    knockoutRules: [
+      { id: 'kr1', name: 'No Audits', logic: "audit_freq == 0", message: "You must conduct security audits to proceed." }
     ]
   },
   {
@@ -100,6 +138,7 @@ export const MOCK_QUIZZES: Quiz[] = [
         id: 'q1',
         text: 'How large is your team?',
         type: 'single',
+        variableName: 'team_size',
         options: [
           { id: 'opt1', text: '1-10', value: 1 },
           { id: 'opt2', text: '11-50', value: 2 },
