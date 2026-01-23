@@ -5,38 +5,63 @@ export interface Organization {
   logo?: string;
 }
 
-export type QuestionType = 'single' | 'multiple' | 'yes_no' | 'short_text' | 'long_text' | 'number' | 'percent' | 'scale';
+export type QuestionType = 
+  | 'yes_no' | 'true_false' 
+  | 'single' | 'multi' | 'dropdown' 
+  | 'number' | 'percent' | 'scale_1_5' | 'scale_1_10'
+  | 'short_text' | 'long_text' | 'date';
+
+export type Severity = 'info' | 'warn' | 'critical';
+
+export interface AnswerOption {
+  id: string;
+  label: string;
+  value: string | number;
+  points?: number;
+  severity?: Severity;
+}
 
 export interface BranchingRule {
   id: string;
-  condition: 'equals' | 'not_equals' | 'greater_than' | 'less_than' | 'contains';
+  condition: 'equals' | 'not_equals' | 'contains' | 'greater_than' | 'less_than' | 'greater_equal' | 'less_equal';
   value: any;
-  nextQuestionId: string;
+  targetQuestionId: string; // 'finish' or question ID
 }
 
 export interface CalculatedField {
   id: string;
-  name: string;
-  variable: string;
-  formula: string; 
+  key: string; // snake_case
+  label: string;
+  type: 'number' | 'boolean' | 'text';
+  expression: string;
+  description?: string;
 }
 
-export interface KnockoutRule {
+export interface Outcome {
   id: string;
-  name: string;
-  logic: string; // e.g. "risk_score > 50"
+  type: 'knockout' | 'threshold';
+  label: string;
   message: string;
+  severity: 'pass' | 'caution' | 'fail';
+  // For knockout
+  condition?: string;
+  // For threshold
+  metric?: string; // 'score' or calculated field key
+  threshold?: number;
+  operator?: '>' | '>=' | '<' | '<=' | '==';
 }
 
 export interface Question {
   id: string;
-  text: string;
   type: QuestionType;
-  variableName?: string;
-  options?: { id: string; text: string; value: number }[];
+  text: string;
+  key: string; // snake_case variable name
+  helpText?: string;
+  category?: string;
+  required?: boolean;
+  options?: AnswerOption[];
   branchingRules?: BranchingRule[];
-  min?: number;
-  max?: number;
+  defaultNextQuestionId?: string; // If no rules match
 }
 
 export interface Quiz {
@@ -46,29 +71,35 @@ export interface Quiz {
   description: string;
   slug: string;
   published: boolean;
-  gateResults: boolean; // Stripe Paywall
+  gateResults: boolean;
   price: number;
   discountEnabled?: boolean;
   originalPrice?: number;
+  
   questions: Question[];
-  calculatedFields?: CalculatedField[];
-  knockoutRules?: KnockoutRule[];
+  calculatedFields: CalculatedField[];
+  outcomes: Outcome[]; // Rules/Knockouts
+  
   image?: string;
-  views?: number; // Total landing page views
+  views?: number;
 }
 
 export interface Submission {
   id: string;
   quizId: string;
   answers: Record<string, any>;
+  calculatedValues: Record<string, any>;
   score: number;
+  outcome?: {
+    label: string;
+    severity: 'pass' | 'caution' | 'fail';
+    message: string;
+  };
   email?: string;
   paid: boolean;
-  status: 'started' | 'completed' | 'knocked_out';
-  lastQuestionId?: string;
-  completedAt?: string;
+  status: 'started' | 'completed';
   startedAt: string;
-  knockoutMessage?: string;
+  completedAt?: string;
 }
 
 // Seed Data
@@ -79,91 +110,63 @@ export const MOCK_ORGS: Organization[] = [
 
 export const MOCK_QUIZZES: Quiz[] = [
   {
-    id: 'quiz-1',
+    id: 'quiz-demo',
     orgId: 'org-1',
-    title: 'Compliance Check 2026',
-    description: 'Ensure your business meets the new 2026 regulatory standards.',
-    slug: 'compliance-check',
+    title: 'Short-Term Rental Feasibility',
+    description: 'Determine if your property is suitable for short-term rental arbitrage.',
+    slug: 'str-feasibility',
     published: true,
-    gateResults: true,
-    price: 49.99,
-    discountEnabled: true,
-    originalPrice: 99.99,
-    image: 'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&q=80&w=1000',
-    views: 1240,
+    gateResults: false,
+    price: 0,
     questions: [
       {
         id: 'q1',
-        text: 'Does your organization have a dedicated Data Protection Officer?',
-        type: 'single',
-        variableName: 'has_dpo',
-        options: [
-          { id: 'opt1', text: 'Yes', value: 10 },
-          { id: 'opt2', text: 'No', value: 0 },
-          { id: 'opt3', text: 'In Progress', value: 5 },
-        ]
+        type: 'number',
+        text: 'Total number of units in the building?',
+        key: 'building_unit_count',
+        required: true,
+        defaultNextQuestionId: 'q2'
       },
       {
         id: 'q2',
-        text: 'How often do you conduct security audits?',
-        type: 'single',
-        variableName: 'audit_freq',
-        options: [
-          { id: 'opt1', text: 'Quarterly', value: 10 },
-          { id: 'opt2', text: 'Annually', value: 5 },
-          { id: 'opt3', text: 'Never', value: 0 },
-        ]
+        type: 'number',
+        text: 'How many active STR listings are already in this building?',
+        key: 'active_str_count',
+        required: true,
+        defaultNextQuestionId: 'finish'
       }
     ],
     calculatedFields: [
-      { id: 'cf1', name: 'Risk Ratio', variable: 'risk_ratio', formula: 'audit_freq / 10' }
-    ],
-    knockoutRules: [
-      { id: 'kr1', name: 'No Audits', logic: "audit_freq == 0", message: "You must conduct security audits to proceed." }
-    ]
-  },
-  {
-    id: 'quiz-2',
-    orgId: 'org-1',
-    title: 'Product Recommender',
-    description: 'Find the perfect software solution for your team based on your needs.',
-    slug: 'product-recommender',
-    published: true,
-    gateResults: false,
-    price: 0,
-    image: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&q=80&w=1000',
-    views: 850,
-    questions: [
       {
-        id: 'q1',
-        text: 'How large is your team?',
-        type: 'single',
-        variableName: 'team_size',
-        options: [
-          { id: 'opt1', text: '1-10', value: 1 },
-          { id: 'opt2', text: '11-50', value: 2 },
-          { id: 'opt3', text: '50+', value: 3 },
-        ]
+        id: 'c1',
+        key: 'str_ratio',
+        label: 'STR Saturation Ratio',
+        type: 'number',
+        expression: 'active_str_count / building_unit_count',
+        description: 'Percentage of units that are already STRs'
+      }
+    ],
+    outcomes: [
+      {
+        id: 'rule1',
+        type: 'knockout',
+        label: 'Saturation High',
+        message: 'This building has too many short-term rentals already. Management is unlikely to approve more.',
+        severity: 'fail',
+        condition: 'str_ratio > 0.25'
+      },
+      {
+        id: 'rule2',
+        type: 'threshold',
+        label: 'Feasible',
+        message: 'This building looks like a great candidate!',
+        severity: 'pass',
+        metric: 'str_ratio',
+        operator: '<=',
+        threshold: 0.25
       }
     ]
-  },
-  {
-    id: 'quiz-3',
-    orgId: 'org-2',
-    title: 'Lead Qualification',
-    description: 'See if you qualify for our enterprise partnership program.',
-    slug: 'lead-qual',
-    published: false,
-    gateResults: false,
-    price: 0,
-    views: 45,
-    questions: []
   }
 ];
 
-export const MOCK_SUBMISSIONS: Submission[] = [
-  { id: 'sub-1', quizId: 'quiz-1', answers: { q1: 'opt1', q2: 'opt1' }, score: 85, email: 'test@example.com', paid: true, status: 'completed', startedAt: '2023-10-25T09:50:00Z', completedAt: '2023-10-25T10:00:00Z' },
-  { id: 'sub-2', quizId: 'quiz-1', answers: { q1: 'opt2' }, score: 40, email: 'lead@example.com', paid: false, status: 'started', lastQuestionId: 'q2', startedAt: '2023-10-26T14:20:00Z' },
-  { id: 'sub-3', quizId: 'quiz-2', answers: { q1: 'opt3' }, score: 100, email: 'customer@gmail.com', paid: true, status: 'completed', startedAt: '2023-10-27T09:10:00Z', completedAt: '2023-10-27T09:15:00Z' },
-  { id: 'sub-4', quizId: 'quiz-1', answers: { q1: 'opt1', q2: 'opt1' }, score: 90, email: 'vip@corp.com', paid: true, status: 'completed', startedAt: '2023-10-28T11:00:00Z', completedAt: '2023-10-28T11:15:00Z' },
-];
+export const MOCK_SUBMISSIONS: Submission[] = [];

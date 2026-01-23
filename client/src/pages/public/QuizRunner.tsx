@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRoute, Link } from "wouter";
 import { storage } from "@/lib/storage";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Input } from "@/components/ui/input";
@@ -10,404 +10,421 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle2, Lock, Download, ChevronRight, Clock, HelpCircle, ArrowRight, AlertOctagon } from "lucide-react";
+import { CheckCircle2, Lock, Download, ChevronRight, Clock, HelpCircle, ArrowRight, AlertOctagon, CalendarIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { Quiz, Question, Submission, Outcome } from "@/lib/mock-data";
 
 export default function QuizRunner() {
   const [, params] = useRoute("/quiz/:slug");
   const slug = params?.slug;
-  const [quiz, setQuiz] = useState(storage.getQuizzes().find(q => q.slug === slug));
-
-  const [started, setStarted] = useState(false);
-  const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(null);
+  
+  // Data State
+  const [quiz, setQuiz] = useState<Quiz | null>(null);
+  const [currentQId, setCurrentQId] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, any>>({});
-  const [finished, setFinished] = useState(false);
-  const [paid, setPaid] = useState(false);
-  const [submissionId, setSubmissionId] = useState<string | null>(null);
-  const [knockoutMessage, setKnockoutMessage] = useState<string | null>(null);
+  const [calculatedValues, setCalculatedValues] = useState<Record<string, any>>({});
+  const [quizOutcome, setQuizOutcome] = useState<Outcome | null>(null);
+  
+  // UI State
+  const [status, setStatus] = useState<'landing' | 'running' | 'paywall' | 'results' | 'knockout'>('landing');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Sync quiz data (for previewing edits live)
   useEffect(() => {
     const q = storage.getQuizzes().find(q => q.slug === slug);
     if (q) {
       setQuiz(q);
-      if (!currentQuestionId && q.questions.length > 0) {
-        setCurrentQuestionId(q.questions[0].id);
-      }
+      if (q.questions.length > 0) setCurrentQId(q.questions[0].id);
     }
   }, [slug]);
 
   if (!quiz) return <div className="min-h-screen flex items-center justify-center">Quiz not found</div>;
 
-  const currentQuestionIdx = quiz.questions.findIndex(q => q.id === currentQuestionId);
-  const currentQuestion = quiz.questions[currentQuestionIdx];
-  const progress = ((currentQuestionIdx + 1) / quiz.questions.length) * 100;
-  
-  // Calculate potential score
-  const score = Object.entries(answers).reduce((acc, [qId, val]) => {
-    const q = quiz.questions.find(q => q.id === qId);
-    if (!q) return acc;
-    
-    // For single/multi select, val is option ID(s)
-    if (q.type === 'single' || q.type === 'yes_no') {
-      const opt = q.options?.find(o => o.id === val);
-      return acc + (opt?.value || 0);
-    }
-    // Logic for other types would go here (e.g. number value itself)
-    return acc;
-  }, 0);
+  const currentQ = quiz.questions.find(q => q.id === currentQId);
+  const progress = quiz.questions.findIndex(q => q.id === currentQId) / quiz.questions.length * 100;
 
-  const handleStart = () => {
-    setStarted(true);
-    setCurrentQuestionId(quiz.questions[0].id);
-    // Create submission record
-    const subId = `sub-${Date.now()}`;
-    setSubmissionId(subId);
-    storage.addSubmission({
-      id: subId,
-      quizId: quiz.id,
-      answers: {},
-      score: 0,
-      paid: false,
-      status: 'started',
-      startedAt: new Date().toISOString()
-    });
-  };
+  // --- Logic Engine ---
 
-  const handleAnswer = (value: any) => {
-    if (!currentQuestion) return;
-    setAnswers(prev => ({ ...prev, [currentQuestion.id]: value }));
-  };
-
-  const evaluateFormula = (formula: string, currentAnswers: Record<string, any>) => {
+  const evaluateExpression = (expr: string, context: any) => {
     try {
-      // Replace variables with values
-      let expression = formula;
-      quiz.questions.forEach(q => {
-        if (q.variableName) {
-           // Get raw value or option value if applicable
-           let val = currentAnswers[q.id];
-           
-           // If it's an option ID, we might need to look up its value or text? 
-           // For simple math, let's assume we want the option 'value' property if it exists, or the raw input if it's a number.
-           if (['single', 'yes_no'].includes(q.type)) {
-             const opt = q.options?.find(o => o.id === val);
-             val = opt?.value || 0;
-           }
-           
-           expression = expression.replace(new RegExp(q.variableName, 'g'), String(Number(val) || 0));
-        }
+      // Very naive safe eval replacement for demo. 
+      // In prod use a proper parser. 
+      // Replacing variables with values from context.
+      
+      const keys = Object.keys(context).sort((a, b) => b.length - a.length); // match longest keys first
+      let parsed = expr;
+      
+      keys.forEach(k => {
+        let val = context[k];
+        if (typeof val === 'string' && isNaN(Number(val))) val = `"${val}"`; 
+        // Handle undefined/null as 0 for math
+        if (val === undefined || val === null) val = 0;
+        parsed = parsed.replaceAll(k, String(val));
       });
-      
-      // Safety check: only allow basic math
-      if (!/^[0-9+\-*/().\s]*$/.test(expression)) return 0;
-      
+
       // eslint-disable-next-line no-new-func
-      return new Function(`return ${expression}`)();
-    } catch (e) {
-      console.error("Formula error", e);
-      return 0;
+      return new Function(`return ${parsed}`)();
+    } catch (err) {
+      console.error(`Error evaluating ${expr}:`, err);
+      return null;
     }
   };
 
-  const checkKnockoutRules = (newAnswers: Record<string, any>) => {
-    if (!quiz.knockoutRules) return null;
+  const getContext = () => {
+    // Map answer values to keys
+    const context: Record<string, any> = {};
+    
+    quiz.questions.forEach(q => {
+      const val = answers[q.id];
+      if (q.key) {
+        // If option based, try to resolve value number if possible, else raw
+        if (['single','dropdown','yes_no','true_false'].includes(q.type)) {
+           const opt = q.options?.find(o => o.value == val); // loose equality
+           if (opt) {
+             // If option value is numeric string, convert
+             context[q.key] = !isNaN(Number(opt.value)) ? Number(opt.value) : opt.value;
+           } else {
+             context[q.key] = !isNaN(Number(val)) ? Number(val) : val;
+           }
+        } else {
+           context[q.key] = !isNaN(Number(val)) ? Number(val) : val;
+        }
+      }
+    });
 
-    for (const rule of quiz.knockoutRules) {
-      try {
-        let condition = rule.logic;
-        // Replace question variables
-        quiz.questions.forEach(q => {
-          if (q.variableName) {
-            let val = newAnswers[q.id];
-            // Resolve option values
-            if (['single', 'yes_no'].includes(q.type)) {
-               const opt = q.options?.find(o => o.id === val);
-               val = opt?.value || 0;
-            }
-            condition = condition.replace(new RegExp(q.variableName, 'g'), String(Number(val) || 0));
-          }
-        });
+    // Add calculated fields already computed? 
+    // We compute them at the end usually, but for branching we might need them live? 
+    // For this version, let's assume Calc fields are end-of-quiz. Branching uses raw answers.
+    return context;
+  };
+
+  const computeResults = () => {
+    // 1. Calculate Fields
+    const context = getContext();
+    const computed: Record<string, any> = {};
+    
+    quiz.calculatedFields.forEach(cf => {
+      const val = evaluateExpression(cf.expression, { ...context, ...computed });
+      computed[cf.key] = val;
+    });
+    setCalculatedValues(computed);
+
+    // 2. Evaluate Rules (Outcomes/Knockouts)
+    let finalOutcome: Outcome | null = null;
+    const finalContext = { ...context, ...computed };
+
+    // Find first matching rule
+    for (const rule of quiz.outcomes) {
+      if (rule.type === 'knockout' && rule.condition) {
+        if (evaluateExpression(rule.condition, finalContext)) {
+          finalOutcome = rule;
+          break;
+        }
+      } else if (rule.type === 'threshold' && rule.metric) {
+        const val = finalContext[rule.metric];
+        const threshold = rule.threshold || 0;
+        let match = false;
         
-        // Resolve calculated fields
-        quiz.calculatedFields?.forEach(cf => {
-           const val = evaluateFormula(cf.formula, newAnswers);
-           condition = condition.replace(new RegExp(cf.variable, 'g'), String(val));
-        });
-
-        // Evaluate
-        // eslint-disable-next-line no-new-func
-        const result = new Function(`return ${condition}`)();
-        if (result) return rule.message;
-
-      } catch (e) {
-        console.error("Knockout logic error", e);
+        switch (rule.operator) {
+          case '>': match = val > threshold; break;
+          case '>=': match = val >= threshold; break;
+          case '<': match = val < threshold; break;
+          case '<=': match = val <= threshold; break;
+          case '==': match = val == threshold; break;
+        }
+        
+        if (match) {
+          finalOutcome = rule;
+          break; // First match wins logic
+        }
       }
     }
-    return null;
-  };
 
-  const getNextQuestionId = () => {
-    if (!currentQuestion) return null;
+    setQuizOutcome(finalOutcome);
     
-    // 1. Check Branching Rules
-    if (currentQuestion.branchingRules && currentQuestion.branchingRules.length > 0) {
-       for (const rule of currentQuestion.branchingRules) {
-          const answer = answers[currentQuestion.id];
-          let match = false;
-          
-          if (rule.condition === 'equals') match = answer == rule.value;
-          if (rule.condition === 'not_equals') match = answer != rule.value;
-          if (rule.condition === 'greater_than') match = Number(answer) > Number(rule.value);
-          if (rule.condition === 'less_than') match = Number(answer) < Number(rule.value);
-          
-          if (match) return rule.nextQuestionId === 'finish' ? null : rule.nextQuestionId;
-       }
-    }
+    // Save Submission
+    const subId = `sub-${Date.now()}`;
+    const submission: Submission = {
+      id: subId,
+      quizId: quiz.id,
+      answers,
+      calculatedValues: computed,
+      score: 0, // todo: calc score if needed
+      outcome: finalOutcome ? {
+        label: finalOutcome.label,
+        severity: finalOutcome.severity,
+        message: finalOutcome.message
+      } : undefined,
+      paid: !quiz.gateResults,
+      status: 'completed',
+      startedAt: new Date().toISOString(), // Mock
+      completedAt: new Date().toISOString()
+    };
+    storage.addSubmission(submission);
 
-    // 2. Default Next
-    const idx = quiz.questions.findIndex(q => q.id === currentQuestion.id);
-    if (idx < quiz.questions.length - 1) {
-      return quiz.questions[idx + 1].id;
+    // Navigate
+    if (finalOutcome?.type === 'knockout') {
+      setStatus('knockout');
+    } else if (quiz.gateResults) {
+      setStatus('paywall');
+    } else {
+      setStatus('results');
     }
-    return null;
   };
 
   const handleNext = () => {
-    // Check knockout
-    const koMsg = checkKnockoutRules(answers);
-    if (koMsg) {
-      setKnockoutMessage(koMsg);
-      setFinished(true);
-      return;
+    if (!currentQ) return;
+
+    // Check Branching
+    let nextId = currentQ.defaultNextQuestionId === 'finish' ? null : (currentQ.defaultNextQuestionId || 'next');
+    
+    if (currentQ.branchingRules) {
+      for (const rule of currentQ.branchingRules) {
+        const ans = answers[currentQ.id];
+        let match = false;
+        // Naive comparisons
+        if (rule.condition === 'equals') match = ans == rule.value;
+        if (rule.condition === 'not_equals') match = ans != rule.value;
+        if (rule.condition === 'greater_than') match = Number(ans) > Number(rule.value);
+        if (rule.condition === 'less_than') match = Number(ans) < Number(rule.value);
+        if (rule.condition === 'contains') match = String(ans).includes(rule.value);
+
+        if (match) {
+          nextId = rule.targetQuestionId === 'finish' ? null : rule.targetQuestionId;
+          break;
+        }
+      }
     }
 
-    const nextId = getNextQuestionId();
-    if (nextId) {
-      setCurrentQuestionId(nextId);
+    if (nextId === 'next') {
+      const idx = quiz.questions.findIndex(q => q.id === currentQ.id);
+      if (idx < quiz.questions.length - 1) {
+        setCurrentQId(quiz.questions[idx + 1].id);
+      } else {
+        computeResults();
+      }
+    } else if (nextId) {
+      setCurrentQId(nextId);
     } else {
-      handleFinish();
-    }
-  };
-  
-  const handleFinish = () => {
-    setFinished(true);
-    if (!quiz.gateResults) {
-      setPaid(true);
+      computeResults();
     }
   };
 
-  const handlePay = () => {
-    setTimeout(() => {
-      setPaid(true);
-    }, 1500);
-  };
+  // --- Renderers ---
 
-  // --- RENDERERS ---
+  const renderInput = () => {
+    if (!currentQ) return null;
+    const val = answers[currentQ.id];
 
-  const renderQuestionInput = () => {
-    if (!currentQuestion) return null;
-
-    switch (currentQuestion.type) {
-      case 'single':
+    switch (currentQ.type) {
       case 'yes_no':
+      case 'true_false':
         return (
-          <RadioGroup onValueChange={handleAnswer} value={answers[currentQuestion.id]}>
-            <div className="space-y-4">
-              {currentQuestion.options?.map((option) => (
-                <Label
-                  key={option.id}
-                  htmlFor={option.id}
-                  className={cn(
-                    "flex items-center space-x-4 border-2 p-6 rounded-2xl cursor-pointer transition-all hover:bg-background hover:border-primary/50",
-                    answers[currentQuestion.id] === option.id 
-                      ? "border-primary bg-primary/5 shadow-md ring-1 ring-primary/20" 
-                      : "bg-white border-transparent shadow-sm hover:shadow-md"
-                  )}
-                >
-                  <RadioGroupItem value={option.id} id={option.id} className="w-6 h-6 border-2" />
-                  <span className="text-xl font-medium">{option.text}</span>
-                </Label>
+          <div className="grid grid-cols-2 gap-4">
+            {['Yes', 'No'].map(opt => (
+              <Button 
+                key={opt} 
+                variant={val === (opt === 'Yes') ? 'default' : 'outline'} 
+                className="h-16 text-lg"
+                onClick={() => setAnswers(p => ({...p, [currentQ.id]: opt === 'Yes'}))}
+              >
+                {opt}
+              </Button>
+            ))}
+          </div>
+        );
+      
+      case 'single':
+        return (
+          <RadioGroup value={val} onValueChange={v => setAnswers(p => ({...p, [currentQ.id]: v}))}>
+            <div className="space-y-3">
+              {currentQ.options?.map(opt => (
+                <div key={opt.id} className={cn("flex items-center space-x-2 border p-4 rounded-lg cursor-pointer hover:bg-muted/50", val === opt.value && "border-primary bg-primary/5")}>
+                  <RadioGroupItem value={String(opt.value)} id={opt.id} />
+                  <Label htmlFor={opt.id} className="flex-1 cursor-pointer">{opt.label}</Label>
+                </div>
               ))}
             </div>
           </RadioGroup>
         );
-      
-      case 'multiple':
+
+      case 'multi':
         return (
-           <div className="space-y-4">
-              {currentQuestion.options?.map((option) => {
-                 const currentVal = (answers[currentQuestion.id] || []) as string[];
-                 const isChecked = currentVal.includes(option.id);
-                 return (
-                    <div 
-                      key={option.id}
-                      className={cn(
-                        "flex items-center space-x-4 border-2 p-6 rounded-2xl cursor-pointer transition-all hover:bg-background hover:border-primary/50",
-                        isChecked
-                          ? "border-primary bg-primary/5 shadow-md ring-1 ring-primary/20" 
-                          : "bg-white border-transparent shadow-sm hover:shadow-md"
-                      )}
-                      onClick={() => {
-                         const newVal = isChecked 
-                            ? currentVal.filter(id => id !== option.id) 
-                            : [...currentVal, option.id];
-                         handleAnswer(newVal);
-                      }}
-                    >
-                      <Checkbox checked={isChecked} className="w-6 h-6 border-2" />
-                      <span className="text-xl font-medium">{option.text}</span>
-                    </div>
-                 );
-              })}
-           </div>
+          <div className="space-y-3">
+            {currentQ.options?.map(opt => {
+              const selected = (val || []) as any[];
+              const isSel = selected.includes(opt.value);
+              return (
+                <div 
+                  key={opt.id} 
+                  className={cn("flex items-center space-x-2 border p-4 rounded-lg cursor-pointer hover:bg-muted/50", isSel && "border-primary bg-primary/5")}
+                  onClick={() => {
+                    const newSel = isSel ? selected.filter(s => s !== opt.value) : [...selected, opt.value];
+                    setAnswers(p => ({...p, [currentQ.id]: newSel}));
+                  }}
+                >
+                  <Checkbox checked={isSel} />
+                  <Label className="flex-1 cursor-pointer">{opt.label}</Label>
+                </div>
+              );
+            })}
+          </div>
+        );
+
+      case 'dropdown':
+        return (
+          <Select value={val} onValueChange={v => setAnswers(p => ({...p, [currentQ.id]: v}))}>
+            <SelectTrigger className="h-12"><SelectValue placeholder="Select an option"/></SelectTrigger>
+            <SelectContent>
+              {currentQ.options?.map(opt => (
+                <SelectItem key={opt.id} value={String(opt.value)}>{opt.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         );
 
       case 'short_text':
-        return (
-          <Input 
-             className="text-lg p-6 h-16" 
-             placeholder="Type your answer here..." 
-             value={answers[currentQuestion.id] || ''}
-             onChange={(e) => handleAnswer(e.target.value)}
-          />
-        );
+      case 'date':
+        return <Input 
+          type={currentQ.type === 'date' ? 'date' : 'text'} 
+          value={val || ''} 
+          onChange={e => setAnswers(p => ({...p, [currentQ.id]: e.target.value}))} 
+          className="h-12 text-lg"
+        />;
 
       case 'long_text':
-        return (
-          <Textarea 
-             className="text-lg p-6 min-h-[150px]" 
-             placeholder="Type your answer here..." 
-             value={answers[currentQuestion.id] || ''}
-             onChange={(e) => handleAnswer(e.target.value)}
-          />
-        );
+        return <Textarea 
+          value={val || ''} 
+          onChange={e => setAnswers(p => ({...p, [currentQ.id]: e.target.value}))} 
+          className="min-h-[150px] text-lg"
+        />;
 
       case 'number':
       case 'percent':
         return (
           <div className="relative">
-             <Input 
-               type="number"
-               className="text-2xl p-6 h-20 text-center font-bold" 
-               placeholder="0" 
-               value={answers[currentQuestion.id] || ''}
-               onChange={(e) => handleAnswer(e.target.value)}
+            <Input 
+              type="number" 
+              value={val || ''} 
+              onChange={e => setAnswers(p => ({...p, [currentQ.id]: parseFloat(e.target.value)}))} 
+              className="h-16 text-2xl text-center"
+              placeholder="0"
             />
-            {currentQuestion.type === 'percent' && (
-               <div className="absolute right-6 top-1/2 -translate-y-1/2 text-muted-foreground font-bold text-xl">%</div>
-            )}
+            {currentQ.type === 'percent' && <div className="absolute right-4 top-1/2 -translate-y-1/2 font-bold">%</div>}
           </div>
         );
 
-      case 'scale':
+      case 'scale_1_5':
+      case 'scale_1_10':
+        const max = currentQ.type === 'scale_1_5' ? 5 : 10;
         return (
           <div className="space-y-6">
-             <div className="text-center text-4xl font-bold text-primary">
-                {answers[currentQuestion.id] || 5}
-             </div>
-             <Slider 
-                min={1} 
-                max={10} 
-                step={1} 
-                value={[Number(answers[currentQuestion.id] || 5)]}
-                onValueChange={(vals) => handleAnswer(vals[0])}
-                className="py-4"
-             />
-             <div className="flex justify-between text-muted-foreground text-sm font-medium uppercase tracking-wide">
-                <span>Not Likely</span>
-                <span>Very Likely</span>
-             </div>
+            <div className="text-center text-4xl font-bold text-primary">{val || 1}</div>
+            <Slider 
+              min={1} max={max} step={1} 
+              value={[val || 1]} 
+              onValueChange={v => setAnswers(p => ({...p, [currentQ.id]: v[0]}))}
+            />
+            <div className="flex justify-between text-xs text-muted-foreground uppercase">
+              <span>Low</span>
+              <span>High</span>
+            </div>
           </div>
         );
-
-      default:
-        return <div>Unsupported Question Type</div>;
     }
   };
 
-  // --- VIEWS ---
+  // --- Views ---
 
-  // Landing Page View
-  if (!started) {
+  if (status === 'landing') {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 relative overflow-hidden">
-        {/* Background blobs */}
-        <div className="absolute top-[-20%] right-[-10%] w-[600px] h-[600px] rounded-full bg-primary/5 blur-3xl" />
-        <div className="absolute bottom-[-20%] left-[-10%] w-[500px] h-[500px] rounded-full bg-blue-400/10 blur-3xl" />
-        
-        <div className="max-w-3xl w-full space-y-10 text-center relative z-10">
-          {quiz.image && (
-            <div className="w-full h-80 rounded-2xl overflow-hidden shadow-2xl mb-8 border-4 border-background ring-1 ring-black/5 mx-auto max-w-2xl">
-              <img src={quiz.image} alt={quiz.title} className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" />
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 text-center">
+        <div className="max-w-2xl w-full space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
+          <h1 className="text-5xl font-display font-bold">{quiz.title}</h1>
+          <p className="text-xl text-muted-foreground">{quiz.description}</p>
+          <div className="flex justify-center gap-8 py-8">
+            <div className="flex flex-col items-center">
+              <span className="text-3xl font-bold">{quiz.questions.length}</span>
+              <span className="text-xs uppercase text-muted-foreground">Questions</span>
             </div>
-          )}
-          
-          <div className="space-y-6">
-            <h1 className="text-5xl md:text-6xl font-bold tracking-tight text-primary font-display leading-tight">
-              {quiz.title}
-            </h1>
-            <p className="text-xl text-muted-foreground leading-relaxed max-w-2xl mx-auto">
-              {quiz.description}
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-w-lg mx-auto py-6">
-            <div className="flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border">
-              <HelpCircle className="w-6 h-6 text-primary mb-2" />
-              <span className="font-bold text-lg">{quiz.questions.length}</span>
-              <span className="text-xs text-muted-foreground uppercase tracking-wide">Questions</span>
-            </div>
-            <div className="flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border">
-              <Clock className="w-6 h-6 text-primary mb-2" />
-              <span className="font-bold text-lg">{Math.ceil(quiz.questions.length * 0.5)} min</span>
-              <span className="text-xs text-muted-foreground uppercase tracking-wide">Time</span>
-            </div>
-            <div className="flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border col-span-2 md:col-span-1">
-              <Download className="w-6 h-6 text-primary mb-2" />
-              <span className="font-bold text-lg">PDF</span>
-              <span className="text-xs text-muted-foreground uppercase tracking-wide">Report</span>
+            <div className="flex flex-col items-center">
+              <span className="text-3xl font-bold">{Math.ceil(quiz.questions.length * 0.5)}m</span>
+              <span className="text-xs uppercase text-muted-foreground">Time</span>
             </div>
           </div>
-
-          <div className="flex flex-col items-center gap-4">
-            {quiz.gateResults && quiz.discountEnabled && quiz.originalPrice && (
-               <div className="flex items-center gap-3 bg-red-50 text-red-600 px-4 py-2 rounded-full border border-red-100">
-                  <span className="text-sm font-bold">Limited Offer:</span>
-                  <span className="text-sm line-through opacity-70">${quiz.originalPrice}</span>
-                  <span className="text-lg font-bold">${quiz.price}</span>
-               </div>
-            )}
-            
-            <Button size="lg" className="h-16 px-12 text-xl w-full sm:w-auto shadow-xl shadow-primary/20 rounded-xl" onClick={handleStart}>
-              Start Assessment
-              <ArrowRight className="ml-2 w-6 h-6" />
-            </Button>
-          </div>
+          <Button size="lg" className="h-16 px-12 text-xl rounded-full" onClick={() => setStatus('running')}>
+            Start Quiz <ArrowRight className="ml-2"/>
+          </Button>
         </div>
       </div>
     );
   }
 
-  // Knockout View
-  if (knockoutMessage) {
+  if (status === 'running' && currentQ) {
     return (
-      <div className="min-h-screen bg-muted/20 flex items-center justify-center p-6">
-        <Card className="max-w-md w-full border-2 border-orange-500/20 shadow-2xl">
-          <CardContent className="pt-10 pb-10 px-8 text-center space-y-6">
-            <div className="w-20 h-20 bg-orange-100 rounded-full flex items-center justify-center mx-auto text-orange-600">
-              <AlertOctagon className="w-10 h-10" />
+      <div className="min-h-screen flex flex-col bg-muted/10">
+        <div className="h-2 bg-muted w-full"><motion.div className="h-full bg-primary" initial={{width: 0}} animate={{width: `${progress}%`}} /></div>
+        <div className="flex-1 flex flex-col items-center justify-center p-6 max-w-2xl mx-auto w-full">
+          <AnimatePresence mode="wait">
+            <motion.div 
+              key={currentQ.id}
+              initial={{opacity: 0, x: 20}} animate={{opacity: 1, x: 0}} exit={{opacity: 0, x: -20}}
+              className="w-full space-y-8"
+            >
+              <div className="space-y-2">
+                {currentQ.category && <span className="text-xs font-bold text-primary tracking-widest uppercase">{currentQ.category}</span>}
+                <h2 className="text-3xl font-medium">{currentQ.text}</h2>
+                {currentQ.helpText && <p className="text-muted-foreground">{currentQ.helpText}</p>}
+              </div>
+              
+              <div className="py-4">
+                {renderInput()}
+              </div>
+
+              <div className="flex justify-end pt-8">
+                <Button size="lg" className="px-8" onClick={handleNext} disabled={currentQ.required && (answers[currentQ.id] === undefined || answers[currentQ.id] === "")}>
+                  Next <ChevronRight className="ml-2 w-4 h-4"/>
+                </Button>
+              </div>
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === 'knockout' || status === 'results') {
+    const isKnockout = status === 'knockout';
+    const severityColor = quizOutcome?.severity === 'fail' ? 'text-red-600 bg-red-50' : quizOutcome?.severity === 'caution' ? 'text-yellow-600 bg-yellow-50' : 'text-green-600 bg-green-50';
+    
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 bg-background">
+        <Card className="max-w-xl w-full shadow-2xl border-t-8 border-t-primary">
+          <CardContent className="pt-12 pb-12 px-8 text-center space-y-8">
+            <div className={`w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 ${severityColor}`}>
+              {isKnockout ? <AlertOctagon className="w-12 h-12"/> : <CheckCircle2 className="w-12 h-12"/>}
             </div>
+            
             <div>
-              <h2 className="text-2xl font-bold">Not Qualified</h2>
-              <p className="text-muted-foreground mt-4 text-lg">
-                {knockoutMessage}
-              </p>
+              <h2 className="text-4xl font-bold font-display mb-2">{quizOutcome?.label || "Result"}</h2>
+              <p className="text-xl text-muted-foreground">{quizOutcome?.message}</p>
             </div>
+
+            {!isKnockout && (
+              <div className="grid grid-cols-2 gap-4 text-left bg-muted/30 p-6 rounded-lg">
+                {Object.entries(calculatedValues).map(([key, val]) => (
+                  <div key={key}>
+                    <div className="text-xs text-muted-foreground uppercase">{key}</div>
+                    <div className="text-xl font-mono font-bold">{typeof val === 'number' ? val.toFixed(2) : val}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <Link href="/">
-               <Button variant="outline" className="mt-4">Return Home</Button>
+              <Button variant="outline" className="mt-8">Return Home</Button>
             </Link>
           </CardContent>
         </Card>
@@ -415,163 +432,5 @@ export default function QuizRunner() {
     );
   }
 
-  // Paywall View
-  if (finished && !paid && quiz.gateResults) {
-    return (
-      <div className="min-h-screen bg-muted/20 flex items-center justify-center p-6">
-        <Card className="max-w-lg w-full border-2 border-primary/20 shadow-2xl overflow-hidden">
-          <div className="h-2 bg-primary w-full" />
-          <CardContent className="pt-10 pb-10 px-8 text-center space-y-8">
-            <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto text-primary animate-pulse">
-              <Lock className="w-10 h-10" />
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-3xl font-bold font-display">Unlock Your Results</h2>
-              <p className="text-muted-foreground text-lg">
-                Your detailed analysis is ready. Pay a one-time fee to access your personalized report and PDF download.
-              </p>
-            </div>
-            
-            <div className="py-6 bg-muted/30 rounded-xl border border-dashed border-primary/20">
-               {quiz.discountEnabled && quiz.originalPrice && (
-                 <div className="text-muted-foreground line-through text-lg mb-1">
-                   ${quiz.originalPrice}
-                 </div>
-               )}
-               <div className="text-5xl font-bold text-primary">
-                 ${quiz.price}
-               </div>
-               <div className="text-sm text-green-600 font-medium mt-2">
-                 One-time payment • Secure Checkout
-               </div>
-            </div>
-
-            <Button size="lg" className="w-full h-14 text-lg font-bold" onClick={handlePay}>
-              Unlock Now
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  // Results View
-  if (finished && (paid || !quiz.gateResults)) {
-    return (
-      <div className="min-h-screen bg-background p-6">
-        <div className="max-w-4xl mx-auto space-y-10 pt-10">
-          <div className="text-center space-y-6">
-            <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto text-green-600 mb-6 animate-in zoom-in duration-500 shadow-lg shadow-green-100">
-              <CheckCircle2 className="w-12 h-12" />
-            </div>
-            <h1 className="text-5xl font-bold font-display">Assessment Complete</h1>
-            <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-              Thank you for completing the {quiz.title}. Here is your personalized breakdown.
-            </p>
-          </div>
-
-          <Card className="border-t-4 border-t-primary shadow-2xl overflow-hidden">
-            <CardContent className="pt-10 pb-10 px-8">
-              <div className="grid md:grid-cols-2 gap-12 items-center">
-                <div className="space-y-6">
-                  <div>
-                    <h3 className="text-3xl font-bold mb-2">Result: <span className="text-primary">Processed</span></h3>
-                    <p className="text-muted-foreground text-lg leading-relaxed">
-                      We have analyzed your answers. Your data indicates specific opportunities for improvement.
-                    </p>
-                  </div>
-                  <Button className="w-full md:w-auto h-12 text-base" size="lg">
-                    <Download className="mr-2 w-5 h-5" />
-                    Download PDF Report
-                  </Button>
-                </div>
-                
-                <div className="bg-muted/30 p-8 rounded-2xl border space-y-6">
-                  <div className="flex justify-between text-lg font-medium">
-                    <span>Computed Score</span>
-                    <span className="font-bold">{score}</span>
-                  </div>
-                  <Progress value={Math.min(score, 100)} className="h-4" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <div className="flex justify-center pb-12">
-             <Link href="/">
-               <Button variant="ghost" className="text-muted-foreground hover:text-foreground">
-                 Return Home
-               </Button>
-             </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Question Runner View
-  return (
-    <div className="min-h-screen bg-muted/10 flex flex-col">
-      <div className="h-2 bg-muted w-full">
-        <motion.div 
-          className="h-full bg-primary" 
-          initial={{ width: 0 }}
-          animate={{ width: `${progress}%` }}
-          transition={{ duration: 0.5 }}
-        />
-      </div>
-
-      <div className="flex-1 flex items-center justify-center p-6">
-        <div className="max-w-2xl w-full space-y-10">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={currentQuestion.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              transition={{ duration: 0.3 }}
-              className="space-y-8"
-            >
-              <div className="space-y-2">
-                 <span className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Question {currentQuestionIdx + 1} of {quiz.questions.length}</span>
-                 <h2 className="text-3xl md:text-4xl font-medium leading-tight font-display text-foreground">
-                   {currentQuestion.text}
-                 </h2>
-              </div>
-
-              {renderQuestionInput()}
-
-            </motion.div>
-          </AnimatePresence>
-
-          <div className="flex justify-between items-center pt-8 border-t">
-            <Button 
-               variant="ghost" 
-               disabled={currentQuestionIdx === 0}
-               onClick={() => {
-                   // This is tricky with branching logic, 'back' might not mean previous index. 
-                   // For now, simpler implementation: just go back index (might be confusing if skipped)
-                   // Proper way: keep history stack.
-                   // Mock impl:
-                   const prevIdx = Math.max(0, currentQuestionIdx - 1);
-                   setCurrentQuestionId(quiz.questions[prevIdx].id);
-               }}
-               className="text-muted-foreground"
-            >
-               Back
-            </Button>
-            <Button 
-              size="lg" 
-              onClick={handleNext} 
-              disabled={!answers[currentQuestion.id] && answers[currentQuestion.id] !== 0}
-              className="px-10 h-12 text-lg rounded-xl shadow-lg shadow-primary/20"
-            >
-              {currentQuestionIdx === quiz.questions.length - 1 ? "Finish" : "Next"}
-              <ChevronRight className="ml-2 w-5 h-5" />
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  return <div>Loading...</div>;
 }
