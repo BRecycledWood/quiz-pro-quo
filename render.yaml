@@ -16,3 +16,7 @@ services:
         sync: false
       - key: STRIPE_SECRET_KEY
         sync: false
+      - key: ZOHO_EMAIL
+        sync: false
+      - key: ZOHO_PASSWORD
+        sync: false

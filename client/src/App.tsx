@@ -12,6 +12,7 @@ import QuizDashboard from "@/pages/admin/QuizDashboard";
 import CompareQuizzes from "@/pages/admin/CompareQuizzes";
 import QuizRunner from "@/pages/public/QuizRunner";
 import PackRunner from "@/pages/public/PackRunner";
+import Demo from "@/pages/public/Demo";
 import TopNav from "@/components/layout/TopNav";
 
 function Router() {
@@ -32,6 +33,7 @@ function Router() {
       <Route path="/admin/quiz/:id/dashboard" component={QuizDashboard} />
 
       {/* Public Routes */}
+      <Route path="/demo" component={Demo} />
       <Route path="/w/:workspaceSlug/:packSlug" component={PackRunner} />
       <Route path="/quiz/:slug" component={QuizRunner} />
 

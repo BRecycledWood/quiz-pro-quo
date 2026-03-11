@@ -66,6 +66,30 @@ export const packVersions = pgTable("pack_versions", {
     .notNull(),
 });
 
+export const submissions = pgTable("submissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id").notNull(),
+  packId: varchar("pack_id").notNull(),
+  packVersionId: varchar("pack_version_id").notNull(),
+  email: text("email"),
+  firstName: text("first_name"),
+  answers: jsonb("answers").notNull(),
+  score: integer("score"),
+  outcomeId: text("outcome_id"),
+  outcomeLabel: text("outcome_label"),
+  paid: boolean("paid").notNull().default(false),
+  stripeSessionId: text("stripe_session_id"),
+  pdfSent: boolean("pdf_sent").notNull().default(false),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+export const insertSubmissionSchema = createInsertSchema(submissions);
+export type InsertSubmission = z.infer<typeof insertSubmissionSchema>;
+export type Submission = typeof submissions.$inferSelect;
+
 export type Workspace = typeof workspaces.$inferSelect;
 export type Pack = typeof packs.$inferSelect;
 export type PackVersion = typeof packVersions.$inferSelect;

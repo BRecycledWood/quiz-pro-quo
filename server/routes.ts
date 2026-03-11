@@ -496,5 +496,149 @@ export async function registerRoutes(
     },
   );
 
+  // ─── NEW: Public submit endpoint ───────────────────────────────────────────
+
+  app.post("/api/public/w/:workspaceSlug/:packSlug/submit", async (req, res) => {
+    const workspaceSlug = String(req.params.workspaceSlug);
+    const packSlug = String(req.params.packSlug);
+
+    const workspace = await storage.getWorkspaceBySlug(workspaceSlug);
+    if (!workspace) return res.status(404).json({ message: "Not found" });
+
+    const pack = await storage.getPackBySlug(workspace.id, packSlug);
+    if (!pack || !pack.publishedVersionId) return res.status(404).json({ message: "Not found" });
+
+    const version = await storage.getPackVersion(pack.publishedVersionId);
+    if (!version) return res.status(404).json({ message: "Not found" });
+
+    const {
+      email,
+      firstName,
+      answers,
+      score,
+      scoreMax,
+      outcomeId,
+      outcomeLabel,
+      outcomeMessage,
+      outcomeStatus,
+      paid,
+      stripeSessionId,
+    } = req.body ?? {};
+
+    if (!answers || typeof answers !== "object") {
+      return res.status(400).json({ message: "answers is required" });
+    }
+
+    let submission;
+    try {
+      submission = await storage.createSubmission({
+        workspaceId: workspace.id,
+        packId: pack.id,
+        packVersionId: pack.publishedVersionId,
+        email: email ?? null,
+        firstName: firstName ?? null,
+        answers,
+        score: typeof score === "number" ? score : null,
+        outcomeId: outcomeId ?? null,
+        outcomeLabel: outcomeLabel ?? null,
+        paid: Boolean(paid),
+        stripeSessionId: stripeSessionId ?? null,
+        completedAt: email ? new Date() : null,
+      });
+    } catch (err) {
+      console.error("[submit] createSubmission failed:", err);
+      return res.status(500).json({ message: "Failed to save submission" });
+    }
+
+    // Email delivery (fire and forget — never crash the response)
+    if (email && typeof email === "string") {
+      (async () => {
+        try {
+          const { sendResultsEmail, sendLeadNotification } = await import("./email");
+          const PDFDocument = (await import("pdfkit")).default;
+          const { renderAssessmentPdf } = await import("./pdf");
+          const { evaluatePack } = await import("@shared/engine/interpreter");
+
+          const evaluation = evaluatePack(version.definition, answers);
+          const doc = new PDFDocument({ size: "LETTER", margin: 48 });
+          const chunks: Buffer[] = [];
+          doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+          await new Promise<void>((resolve, reject) => {
+            doc.on("end", resolve);
+            doc.on("error", reject);
+            renderAssessmentPdf(doc, {
+              workspace: { name: workspace.name, slug: workspace.slug, logoUrl: workspace.logoUrl ?? null, primaryColor: workspace.primaryColor ?? null, secondaryColor: workspace.secondaryColor ?? null },
+              pack: { name: pack.name, slug: pack.slug },
+              version: { version: version.version, createdAt: version.createdAt },
+              definition: version.definition,
+              answers,
+              evaluation: { score: evaluation.score, reasons: evaluation.reasons, outcome: evaluation.outcome, disqualified: evaluation.disqualified },
+              timestamp: new Date(),
+            }).then(() => doc.end()).catch(reject);
+          });
+          const pdfBuffer = Buffer.concat(chunks);
+
+          await sendResultsEmail({
+            to: email,
+            firstName: firstName ?? undefined,
+            packName: pack.name,
+            outcomeLabel: outcomeLabel ?? evaluation.outcome?.title ?? "Your Results",
+            outcomeMessage: outcomeMessage ?? evaluation.outcome?.description ?? "",
+            score: typeof score === "number" ? score : evaluation.score,
+            scoreMax: typeof scoreMax === "number" ? scoreMax : undefined,
+            pdfBuffer,
+            workspaceName: workspace.name,
+            packSlug: pack.slug,
+          });
+
+          await sendLeadNotification({
+            packName: pack.name,
+            workspaceName: workspace.name,
+            leadEmail: email,
+            leadFirstName: firstName ?? undefined,
+            score: typeof score === "number" ? score : evaluation.score,
+            outcomeLabel: outcomeLabel ?? evaluation.outcome?.title ?? "Unknown",
+            submissionId: submission.id,
+          });
+
+          await storage.updateSubmission(submission.id, { pdfSent: true });
+        } catch (emailErr) {
+          console.error("[submit] Email delivery failed:", emailErr);
+        }
+      })();
+    }
+
+    return res.json({ id: submission.id, success: true });
+  });
+
+  // ─── NEW: Admin submission/stats endpoints ──────────────────────────────────
+
+  app.get("/api/admin/workspaces/:workspaceId/submissions", adminAuth, async (req, res) => {
+    const workspaceId = String(req.params.workspaceId);
+    const limit = Number(req.query.limit ?? 50);
+    const offset = Number(req.query.offset ?? 0);
+    const all = await storage.getSubmissionsByWorkspace(workspaceId);
+    return res.json({ submissions: all.slice(offset, offset + limit), total: all.length });
+  });
+
+  app.get("/api/admin/packs/:packId/submissions", adminAuth, async (req, res) => {
+    const packId = String(req.params.packId);
+    const submissions = await storage.getSubmissionsByPack(packId);
+    return res.json(submissions);
+  });
+
+  app.get("/api/admin/workspaces/:workspaceId/stats", adminAuth, async (req, res) => {
+    const workspaceId = String(req.params.workspaceId);
+    const stats = await storage.getWorkspaceStats(workspaceId);
+    return res.json(stats);
+  });
+
+  app.get("/api/admin/submissions/:id", adminAuth, async (req, res) => {
+    const id = String(req.params.id);
+    const submission = await storage.getSubmission(id);
+    if (!submission) return res.status(404).json({ message: "Not found" });
+    return res.json(submission);
+  });
+
   return httpServer;
 }
