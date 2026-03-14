@@ -1,21 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useRoute } from "wouter";
 import type { Answers, AnswerValue, PackDefinition, Outcome } from "@shared/pack";
 import { evaluatePack, getVisibleQuestionIds } from "@shared/engine/interpreter";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { ArrowLeft, ArrowRight, CheckCircle2, RotateCcw } from "lucide-react";
 
 const NOT_FOUND = "not_found" as const;
 const UNAVAILABLE = "unavailable" as const;
@@ -68,19 +59,13 @@ function isAnswered(value: AnswerValue | undefined): boolean {
   return true;
 }
 
-function formatStatusLabel(status: StatusTone) {
-  if (status === "pass") return "Pass";
-  if (status === "caution") return "Caution";
-  return "Fail";
-}
-
 function getStatusFromOutcome(outcome: Outcome | null, disqualified: boolean): {
   label: string;
   tone: StatusTone;
 } {
   const explicit = outcome?.status;
   if (explicit === "pass" || explicit === "caution" || explicit === "fail") {
-    return { label: formatStatusLabel(explicit), tone: explicit };
+    return { label: explicit.charAt(0).toUpperCase() + explicit.slice(1), tone: explicit };
   }
   if (disqualified) return { label: "Fail", tone: "fail" };
   const meta = outcome?.metadata as Record<string, unknown> | undefined;
@@ -90,7 +75,6 @@ function getStatusFromOutcome(outcome: Outcome | null, disqualified: boolean): {
   if (normalized.includes("fail") || normalized.includes("ineligible")) return { label: "Fail", tone: "fail" };
   if (normalized.includes("caution") || normalized.includes("review")) return { label: "Caution", tone: "caution" };
   if (normalized.includes("pass") || normalized.includes("eligible")) return { label: "Pass", tone: "pass" };
-  if (raw === "pass" || raw === "caution" || raw === "fail") return { label: raw.charAt(0).toUpperCase() + raw.slice(1), tone: raw };
   return { label: "Pass", tone: "pass" };
 }
 
@@ -107,8 +91,7 @@ function encodeAnswersBase64Url(answers: Answers): string {
   const bytes = new TextEncoder().encode(json);
   let binary = "";
   bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
-  const base64 = btoa(binary);
-  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 function decodeAnswersBase64Url(encoded: string): Answers | null {
@@ -124,7 +107,7 @@ function decodeAnswersBase64Url(encoded: string): Answers | null {
   } catch { return null; }
 }
 
-// ─── Email Gate Component ──────────────────────────────────────────────────
+// ─── Email Gate ──────────────────────────────────────────────────────────────
 
 function EmailGate({
   onSubmit,
@@ -148,68 +131,78 @@ function EmailGate({
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex items-center justify-center px-4">
+    <div className="min-h-screen bg-background flex items-center justify-center px-4">
       <div className="w-full max-w-md space-y-6">
-        <div className="text-center space-y-2">
-          <div className="w-14 h-14 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-7 h-7 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+        <div className="text-center space-y-3">
+          <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto">
+            <CheckCircle2 className="w-8 h-8 text-emerald-600" />
           </div>
           <h2 className="text-2xl font-bold">You're almost done.</h2>
           <p className="text-muted-foreground text-sm leading-relaxed">
-            Enter your details to unlock your results and receive your personalized PDF report by email.
+            Enter your details to unlock your personalised results and receive your PDF report by email.
           </p>
         </div>
 
-        <Card>
-          <CardContent className="pt-6">
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="gate-firstname">First name</Label>
-                <Input
-                  id="gate-firstname"
-                  type="text"
-                  placeholder="First name"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="gate-email">Work email <span className="text-destructive">*</span></Label>
-                <Input
-                  id="gate-email"
-                  type="email"
-                  placeholder="Work email"
-                  value={email}
-                  onChange={(e) => { setEmail(e.target.value); setEmailError(""); }}
-                />
-                {emailError ? <p className="text-xs text-destructive">{emailError}</p> : null}
-              </div>
-              <Button type="submit" className="w-full h-11 text-base">
-                Get My Results →
-              </Button>
-            </form>
-            <p className="text-center text-xs text-muted-foreground mt-3">
-              No spam. Your results are sent once, immediately.
-            </p>
-            <div className="text-center mt-4">
-              <button
-                type="button"
-                onClick={onSkip}
-                className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
-              >
-                Skip — view results without report
-              </button>
-            </div>
-          </CardContent>
-        </Card>
+        <form onSubmit={handleSubmit} className="space-y-4 bg-card border rounded-2xl p-6">
+          <div className="space-y-1.5">
+            <label htmlFor="gate-firstname" className="text-sm font-medium">First name</label>
+            <Input
+              id="gate-firstname"
+              type="text"
+              placeholder="First name"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="gate-email" className="text-sm font-medium">
+              Work email <span className="text-destructive">*</span>
+            </label>
+            <Input
+              id="gate-email"
+              type="email"
+              placeholder="you@company.com"
+              value={email}
+              onChange={(e) => { setEmail(e.target.value); setEmailError(""); }}
+            />
+            {emailError ? <p className="text-xs text-destructive">{emailError}</p> : null}
+          </div>
+          <Button type="submit" className="w-full h-11 text-base">
+            Get My Results →
+          </Button>
+          <p className="text-center text-xs text-muted-foreground">
+            No spam. Your report is sent once, immediately.
+          </p>
+        </form>
+
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={onSkip}
+            className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
+          >
+            Skip — view results without report
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-// ─── Main PackRunner ────────────────────────────────────────────────────────
+// ─── Progress Bar ─────────────────────────────────────────────────────────────
+
+function ProgressBar({ value }: { value: number }) {
+  return (
+    <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+      <div
+        className="h-full bg-primary rounded-full transition-all duration-500 ease-out"
+        style={{ width: `${Math.max(4, value)}%` }}
+      />
+    </div>
+  );
+}
+
+// ─── Main PackRunner ──────────────────────────────────────────────────────────
 
 export default function PackRunner() {
   const [, params] = useRoute<{ workspaceSlug: string; packSlug: string }>(
@@ -223,6 +216,7 @@ export default function PackRunner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<typeof NOT_FOUND | typeof UNAVAILABLE | null>(null);
   const [answers, setAnswers] = useState<Answers>({});
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [result, setResult] = useState<ReturnType<typeof evaluatePack> | null>(null);
   const [pendingResult, setPendingResult] = useState<ReturnType<typeof evaluatePack> | null>(null);
   const [showEmailGate, setShowEmailGate] = useState(false);
@@ -231,6 +225,9 @@ export default function PackRunner() {
   const [paymentReturnError, setPaymentReturnError] = useState<string | null>(null);
   const [downloadMessage, setDownloadMessage] = useState<string | null>(null);
   const [submittedEmail, setSubmittedEmail] = useState<string | null>(null);
+
+  // Used to animate card transitions
+  const [cardKey, setCardKey] = useState(0);
 
   const searchParams = typeof window !== "undefined"
     ? new URLSearchParams(window.location.search)
@@ -266,6 +263,7 @@ export default function PackRunner() {
       setShowEmailGate(false);
       setPaymentReturnError(null);
       setDownloadMessage(null);
+      setCurrentQuestionIndex(0);
       try {
         const response = await fetch(`/api/public/w/${workspaceSlug}/${packSlug}`);
         if (!response.ok) {
@@ -311,7 +309,51 @@ export default function PackRunner() {
     return definition.questions.filter((q) => visibleQuestionIds.includes(q.id));
   }, [definition, visibleQuestionIds]);
 
-  const answeredCount = visibleQuestions.filter((q) => isAnswered(answers[q.id])).length;
+  // Clamp index when branching changes the visible list
+  const safeIndex = Math.min(currentQuestionIndex, Math.max(0, visibleQuestions.length - 1));
+  const currentQuestion = visibleQuestions[safeIndex] ?? null;
+  const isLastQuestion = safeIndex >= visibleQuestions.length - 1;
+  const progress = visibleQuestions.length > 0
+    ? ((safeIndex + 1) / visibleQuestions.length) * 100
+    : 0;
+
+  const autoAdvanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleAnswerChange = (questionId: string, value: AnswerValue) => {
+    setAnswers((prev) => ({ ...prev, [questionId]: value }));
+  };
+
+  const advanceToNext = () => {
+    setCardKey((k) => k + 1);
+    setCurrentQuestionIndex((prev) => prev + 1);
+  };
+
+  const handleSelectAnswer = (questionId: string, value: AnswerValue) => {
+    handleAnswerChange(questionId, value);
+    // Auto-advance for single-choice on non-last questions
+    if (!isLastQuestion) {
+      if (autoAdvanceTimer.current) clearTimeout(autoAdvanceTimer.current);
+      autoAdvanceTimer.current = setTimeout(() => {
+        advanceToNext();
+      }, 320);
+    }
+  };
+
+  const handleNext = () => {
+    if (!currentQuestion) return;
+    if (isLastQuestion) {
+      handleSeeResults();
+    } else {
+      advanceToNext();
+    }
+  };
+
+  const handleBack = () => {
+    if (safeIndex > 0) {
+      setCardKey((k) => k + 1);
+      setCurrentQuestionIndex((prev) => Math.max(0, prev - 1));
+    }
+  };
 
   const downloadPdf = (encoded: string, sessionId: string | null) => {
     if (!encoded) return;
@@ -320,11 +362,6 @@ export default function PackRunner() {
     window.location.href = pdfUrl;
   };
 
-  const handleAnswerChange = (questionId: string, value: AnswerValue) => {
-    setAnswers((prev) => ({ ...prev, [questionId]: value }));
-  };
-
-  // Fire-and-forget submit to API
   const postSubmission = (email: string | null, firstName: string | null, evaluation: ReturnType<typeof evaluatePack>) => {
     if (!definition || !data) return;
     fetch(`/api/public/w/${workspaceSlug}/${packSlug}/submit`, {
@@ -376,6 +413,8 @@ export default function PackRunner() {
     setCheckoutError(null);
     setPaymentReturnError(null);
     setSubmittedEmail(null);
+    setCurrentQuestionIndex(0);
+    setCardKey((k) => k + 1);
   };
 
   const handleUnlockPdf = async () => {
@@ -411,14 +450,16 @@ export default function PackRunner() {
     if (!stored) { setPaymentReturnError("Payment confirmed, but we couldn't find your answers. Please run again."); return; }
     try {
       const payload = JSON.parse(stored) as StoredAnswersPayload;
-      if (!payload?.answers || !payload.encodedAnswersBase64Url) { setPaymentReturnError("Payment confirmed, but we couldn't find your answers. Please run again."); return; }
+      if (!payload?.answers || !payload.encodedAnswersBase64Url) {
+        setPaymentReturnError("Payment confirmed, but we couldn't find your answers. Please run again.");
+        return;
+      }
       setAnswers(payload.answers);
       const evaluation = evaluatePack(definition, payload.answers);
       setResult(evaluation);
-      const downloadKey = downloadFlagKey(sessionIdParam);
-      const downloaded = localStorage.getItem(downloadKey);
-      if (!downloaded) {
-        localStorage.setItem(downloadKey, "1");
+      const dlKey = downloadFlagKey(sessionIdParam);
+      if (!localStorage.getItem(dlKey)) {
+        localStorage.setItem(dlKey, "1");
         downloadPdf(payload.encodedAnswersBase64Url, sessionIdParam);
         setDownloadMessage("PDF downloaded.");
       } else {
@@ -427,32 +468,57 @@ export default function PackRunner() {
     } catch { setPaymentReturnError("Payment confirmed, but we couldn't find your answers. Please run again."); }
   }, [definition, hasPaidSession, sessionIdParam, workspaceSlug, packSlug]);
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Loading...</div>;
-  if (error === NOT_FOUND) return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Not found</div>;
-  if (error === UNAVAILABLE) return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Server unavailable</div>;
-  if (!definition || !data) return null;
+  // ── Loading / error states ────────────────────────────────────────────────
 
-  if (paymentReturnError) {
+  if (loading) {
     return (
-      <div className="min-h-screen bg-background text-foreground">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-12">
-          <div className="flex justify-start"><Link href="/admin"><Button variant="ghost" size="sm">Back to Admin</Button></Link></div>
-          <Card>
-            <CardHeader><CardTitle>Payment confirmed</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">{paymentReturnError}</p>
-              <div className="flex justify-end"><Button onClick={handleStartOver}>Start over</Button></div>
-            </CardContent>
-          </Card>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="space-y-3 text-center">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-sm text-muted-foreground">Loading quiz…</p>
         </div>
       </div>
     );
   }
 
-  // Email gate screen
+  if (error === NOT_FOUND) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-center px-4">
+        <p className="text-lg font-semibold">Quiz not found</p>
+        <p className="text-sm text-muted-foreground">This quiz doesn't exist or hasn't been published yet.</p>
+        <Link href="/demo"><Button variant="outline">See demo quizzes</Button></Link>
+      </div>
+    );
+  }
+
+  if (error === UNAVAILABLE) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-center px-4">
+        <p className="text-lg font-semibold">Temporarily unavailable</p>
+        <p className="text-sm text-muted-foreground">Please try again in a moment.</p>
+      </div>
+    );
+  }
+
+  if (!definition || !data) return null;
+
+  if (paymentReturnError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4">
+        <div className="max-w-md w-full space-y-4 text-center">
+          <p className="font-semibold">Payment confirmed</p>
+          <p className="text-sm text-muted-foreground">{paymentReturnError}</p>
+          <Button onClick={handleStartOver}>Start over</Button>
+        </div>
+      </div>
+    );
+  }
+
   if (showEmailGate) {
     return <EmailGate onSubmit={handleEmailGateSubmit} onSkip={handleEmailGateSkip} />;
   }
+
+  // ── Result screen ──────────────────────────────────────────────────────────
 
   if (result) {
     const outcome = result.outcome;
@@ -460,133 +526,267 @@ export default function PackRunner() {
     const paidSessionId = hasPaidSession ? sessionIdParam : null;
     const pdfUrl = `/api/public/w/${workspaceSlug}/${packSlug}/pdf?answers=${encodedAnswers}${paidSessionId ? `&session_id=${encodeURIComponent(paidSessionId)}` : ""}`;
     const unlockDisabled = checkoutLoading || !stripeConfigured || !publicAppUrlConfigured;
+
     const actionList: Array<{ label: string; url?: string }> = [];
     if (outcome?.ctaLabel) actionList.push({ label: outcome.ctaLabel, url: outcome.ctaUrl });
     const metaActions = (outcome?.metadata as Record<string, unknown> | undefined)?.actions;
     if (Array.isArray(metaActions)) metaActions.forEach((action) => {
       if (action && typeof action === "object") {
-        const label = "label" in action ? String((action as Record<string,unknown>).label ?? "") : "";
-        const url = "url" in action ? String((action as Record<string,unknown>).url ?? "") : undefined;
+        const label = "label" in action ? String((action as Record<string, unknown>).label ?? "") : "";
+        const url = "url" in action ? String((action as Record<string, unknown>).url ?? "") : undefined;
         if (label) actionList.push({ label, url });
       }
     });
 
     return (
-      <div className="min-h-screen bg-background text-foreground">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-12">
-          <div className="flex justify-start"><Link href="/admin"><Button variant="ghost" size="sm">Back to Admin</Button></Link></div>
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 py-16">
+        <div className="w-full max-w-lg space-y-6">
 
           {submittedEmail ? (
-            <div className="rounded-md bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
+            <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 text-center">
               ✉️ Your PDF report is on its way to <strong>{submittedEmail}</strong>
             </div>
           ) : null}
 
-          <Card>
-            <CardHeader className="space-y-3">
-              <Badge className={getToneClasses(status.tone)}>{status.label}</Badge>
-              <CardTitle className="text-2xl">{outcome?.title ?? "Result"}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {outcome?.description ? <p className="text-sm text-muted-foreground">{outcome.description}</p> : null}
-              <div className="grid gap-4 text-sm">
-                <div className="flex items-center justify-between rounded-md border px-4 py-3">
-                  <span className="text-muted-foreground">Score</span>
-                  <span className="font-medium">{result.score}</span>
-                </div>
-                {result.reasons.length > 0 ? (
-                  <div className="rounded-md border px-4 py-3">
-                    <div className="text-muted-foreground">Reasons</div>
-                    <ul className="mt-2 list-disc pl-5 text-sm text-foreground">
-                      {result.reasons.map((reason) => <li key={reason}>{reason}</li>)}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
-              {actionList.length > 0 ? (
-                <div className="rounded-md border px-4 py-3">
-                  <div className="text-muted-foreground">Next actions</div>
-                  <ul className="mt-2 space-y-2">
-                    {actionList.map((action, index) => (
-                      <li key={`${action.label}-${index}`}>
-                        {action.url ? <a className="text-sm font-medium text-primary hover:underline" href={action.url} target="_blank" rel="noreferrer">{action.label}</a> : <span className="text-sm font-medium">{action.label}</span>}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+          {/* Score card */}
+          <div className="bg-card border rounded-2xl p-8 space-y-6 shadow-sm">
+            <div className="text-center space-y-3">
+              <Badge className={`${getToneClasses(status.tone)} text-sm px-4 py-1`}>
+                {status.label}
+              </Badge>
+              <h1 className="text-2xl font-bold">{outcome?.title ?? "Your Result"}</h1>
+              {outcome?.description ? (
+                <p className="text-muted-foreground text-sm leading-relaxed">{outcome.description}</p>
               ) : null}
-              <div className="rounded-md border px-4 py-3 space-y-3">
-                <div className="text-muted-foreground">PDF report</div>
-                {isPaidPack ? (
-                  hasPaidSession ? (
-                    <Button asChild><a href={pdfUrl}>Download PDF</a></Button>
-                  ) : (
-                    <div className="space-y-2">
-                      <Button onClick={handleUnlockPdf} disabled={unlockDisabled}>{checkoutLoading ? "Opening checkout..." : "Unlock PDF"}</Button>
-                      {!publicAppUrlConfigured ? <p className="text-xs text-muted-foreground">PUBLIC_APP_URL not configured.</p> : null}
-                      {!stripeConfigured ? <p className="text-xs text-muted-foreground">Stripe not configured.</p> : null}
-                    </div>
-                  )
-                ) : (
-                  <Button asChild><a href={pdfUrl}>Download PDF</a></Button>
-                )}
-                {checkoutError ? <p className="text-xs text-destructive">{checkoutError}</p> : null}
-                {downloadMessage ? <p className="text-xs text-muted-foreground">{downloadMessage}</p> : null}
+            </div>
+
+            {/* Score visual */}
+            <div className="flex items-center justify-center">
+              <div className="text-center bg-muted/40 rounded-xl px-8 py-4">
+                <p className="text-4xl font-bold text-foreground">{result.score}</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mt-1">Score</p>
               </div>
-              <div className="flex justify-end"><Button onClick={handleStartOver}>Start over</Button></div>
-            </CardContent>
-          </Card>
+            </div>
+
+            {result.reasons.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Key findings</p>
+                <ul className="space-y-1.5">
+                  {result.reasons.map((reason) => (
+                    <li key={reason} className="flex items-start gap-2 text-sm">
+                      <CheckCircle2 className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                      {reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {actionList.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Next steps</p>
+                <div className="flex flex-col gap-2">
+                  {actionList.map((action, index) => (
+                    action.url
+                      ? <a key={`${action.label}-${index}`} href={action.url} target="_blank" rel="noreferrer">
+                          <Button className="w-full">{action.label}</Button>
+                        </a>
+                      : <Button key={`${action.label}-${index}`} variant="outline" className="w-full">{action.label}</Button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/* PDF */}
+            <div className="pt-2 border-t space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">PDF Report</p>
+              {isPaidPack ? (
+                hasPaidSession
+                  ? <Button asChild className="w-full"><a href={pdfUrl}>Download PDF</a></Button>
+                  : <div className="space-y-2">
+                      <Button className="w-full" onClick={handleUnlockPdf} disabled={unlockDisabled}>
+                        {checkoutLoading ? "Opening checkout…" : "Unlock PDF Report"}
+                      </Button>
+                      {!stripeConfigured ? <p className="text-xs text-muted-foreground text-center">Stripe not configured.</p> : null}
+                    </div>
+              ) : (
+                <Button asChild className="w-full"><a href={pdfUrl}>Download PDF Report</a></Button>
+              )}
+              {checkoutError ? <p className="text-xs text-destructive text-center">{checkoutError}</p> : null}
+              {downloadMessage ? <p className="text-xs text-muted-foreground text-center">{downloadMessage}</p> : null}
+            </div>
+          </div>
+
+          <button
+            onClick={handleStartOver}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mx-auto"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            Take again
+          </button>
         </div>
       </div>
     );
   }
 
+  // ── Quiz card screen ───────────────────────────────────────────────────────
+
+  if (!currentQuestion) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">
+        No questions available.
+      </div>
+    );
+  }
+
+  const currentAnswer = answers[currentQuestion.id];
+  const hasAnswer = isAnswered(currentAnswer);
+  const type = currentQuestion.type;
+  const isChoice = type === "single" || type === "select" || type === "boolean" || type === "yesno";
+  const isNumberInput = type === "number";
+
+  const options = currentQuestion.options ?? [];
+  const yesNoOptions = [
+    { id: "yes", label: "Yes", value: true as AnswerValue },
+    { id: "no", label: "No", value: false as AnswerValue },
+  ];
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-12">
-        <div className="flex justify-start"><Link href="/admin"><Button variant="ghost" size="sm">Back to Admin</Button></Link></div>
-        <div className="space-y-2">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">{data.workspace.name}</p>
-          <h1 className="text-3xl font-semibold">{definition.name ?? data.pack.name}</h1>
-          <p className="text-sm text-muted-foreground">{answeredCount} of {visibleQuestions.length} answered</p>
+    <div className="min-h-screen bg-background flex flex-col">
+
+      {/* Top bar */}
+      <div className="w-full px-4 pt-6 pb-4 max-w-xl mx-auto space-y-3">
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
+          <span className="font-medium text-foreground">{definition.name ?? data.pack.name}</span>
+          <span>{safeIndex + 1} / {visibleQuestions.length}</span>
         </div>
-        <div className="space-y-4">
-          {visibleQuestions.map((question, index) => {
-            const value = answers[question.id];
-            const type = question.type;
-            const isYesNo = type === "boolean" || type === "yesno";
-            const isSelect = type === "single" || type === "select";
-            const isNumber = type === "number";
-            return (
-              <Card key={question.id}>
-                <CardHeader><CardTitle className="text-base">{index + 1}. {question.prompt}</CardTitle></CardHeader>
-                <CardContent>
-                  {isYesNo ? (
-                    <RadioGroup value={value === true ? "true" : value === false ? "false" : ""} onValueChange={(next) => handleAnswerChange(question.id, next === "true")} className="grid gap-2">
-                      <div className="flex items-center space-x-2"><RadioGroupItem value="true" id={`${question.id}-yes`} /><Label htmlFor={`${question.id}-yes`}>Yes</Label></div>
-                      <div className="flex items-center space-x-2"><RadioGroupItem value="false" id={`${question.id}-no`} /><Label htmlFor={`${question.id}-no`}>No</Label></div>
-                    </RadioGroup>
-                  ) : null}
-                  {isSelect ? (
-                    <Select value={typeof value === "string" ? value : ""} onValueChange={(next) => handleAnswerChange(question.id, next)}>
-                      <SelectTrigger className="w-full"><SelectValue placeholder="Select an option" /></SelectTrigger>
-                      <SelectContent>{(question.options ?? []).map((option) => { const optionValue = option.value ?? option.id; return <SelectItem key={option.id} value={optionValue}>{option.label}</SelectItem>; })}</SelectContent>
-                    </Select>
-                  ) : null}
-                  {isNumber ? (
-                    <Input type="number" value={typeof value === "number" ? String(value) : ""} onChange={(event) => { const raw = event.target.value; handleAnswerChange(question.id, raw === "" ? null : Number(raw)); }} placeholder="Enter a number" />
-                  ) : null}
-                  {!isYesNo && !isSelect && !isNumber ? (
-                    <Input type="text" value={typeof value === "string" ? value : ""} onChange={(e) => handleAnswerChange(question.id, e.target.value)} placeholder="Enter your answer" />
-                  ) : null}
-                </CardContent>
-              </Card>
-            );
-          })}
+        <ProgressBar value={progress} />
+      </div>
+
+      {/* Question card */}
+      <div className="flex-1 flex items-start justify-center px-4 pt-8 pb-24">
+        <div
+          key={cardKey}
+          className="w-full max-w-xl animate-in fade-in slide-in-from-bottom-3 duration-300"
+        >
+          <div className="space-y-6">
+            <h2 className="text-xl md:text-2xl font-semibold leading-snug">
+              {currentQuestion.prompt}
+            </h2>
+
+            {/* Yes/No */}
+            {(type === "boolean" || type === "yesno") ? (
+              <div className="grid grid-cols-2 gap-3">
+                {yesNoOptions.map((opt) => {
+                  const selected = currentAnswer === opt.value;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => handleSelectAnswer(currentQuestion.id, opt.value)}
+                      className={`rounded-xl border-2 px-6 py-5 text-base font-semibold transition-all duration-150 ${
+                        selected
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-card hover:border-primary/50 hover:bg-muted/50"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {/* Single choice / select */}
+            {(type === "single" || type === "select") ? (
+              <div className="flex flex-col gap-2.5">
+                {options.map((option) => {
+                  const optValue = option.value ?? option.id;
+                  const selected = currentAnswer === optValue;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => handleSelectAnswer(currentQuestion.id, optValue)}
+                      className={`w-full text-left rounded-xl border-2 px-5 py-4 text-sm font-medium transition-all duration-150 ${
+                        selected
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-card hover:border-primary/50 hover:bg-muted/50"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {/* Number */}
+            {isNumberInput ? (
+              <Input
+                type="number"
+                className="text-base h-12"
+                value={typeof currentAnswer === "number" ? String(currentAnswer) : ""}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  handleAnswerChange(currentQuestion.id, raw === "" ? null : Number(raw));
+                }}
+                placeholder="Enter a number"
+                autoFocus
+              />
+            ) : null}
+
+            {/* Text fallback */}
+            {!isChoice && !isNumberInput ? (
+              <Input
+                type="text"
+                className="text-base h-12"
+                value={typeof currentAnswer === "string" ? currentAnswer : ""}
+                onChange={(e) => handleAnswerChange(currentQuestion.id, e.target.value)}
+                placeholder="Type your answer"
+                autoFocus
+              />
+            ) : null}
+          </div>
         </div>
-        <div className="flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">Visible items may change based on your responses.</p>
-          <Button onClick={handleSeeResults} disabled={visibleQuestions.length === 0}>See results</Button>
+      </div>
+
+      {/* Bottom nav */}
+      <div className="fixed bottom-0 left-0 right-0 bg-background/90 backdrop-blur border-t">
+        <div className="max-w-xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleBack}
+            disabled={safeIndex === 0}
+            className="gap-1.5"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back
+          </Button>
+
+          {/* For choice questions that auto-advance, show a subtle indicator on last question */}
+          {isChoice && isLastQuestion ? (
+            <Button
+              onClick={handleSeeResults}
+              disabled={!hasAnswer}
+              className="gap-1.5"
+            >
+              See Results
+              <ArrowRight className="w-4 h-4" />
+            </Button>
+          ) : isChoice ? (
+            <span className="text-xs text-muted-foreground">Select an option to continue</span>
+          ) : (
+            <Button
+              onClick={handleNext}
+              disabled={!hasAnswer}
+              className="gap-1.5"
+            >
+              {isLastQuestion ? "See Results" : "Next"}
+              <ArrowRight className="w-4 h-4" />
+            </Button>
+          )}
         </div>
       </div>
     </div>
