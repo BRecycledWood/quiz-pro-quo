@@ -1,5 +1,5 @@
 import { Link } from "wouter";
-import { CheckCircle, Mail, BarChart3, Zap, FileText, Users } from "lucide-react";
+import { CheckCircle, Mail, BarChart3, Zap, FileText, Users, ArrowRight } from "lucide-react";
 import DemoDashboardPreview from "@/components/DemoDashboardPreview";
 
 const CONTACT_MAILTO =
@@ -64,14 +64,15 @@ export default function Demo() {
             reports, and feed a real-time analytics dashboard — no code required.
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <a
-              href={CONTACT_MAILTO}
-              className="inline-flex items-center justify-center px-6 py-3 rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition-colors"
+            <Link
+              href="/admin"
+              className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition-colors"
             >
               Get Started Free
-            </a>
+              <ArrowRight className="w-4 h-4" />
+            </Link>
             <Link
-              href="/w/demo/ai-readiness"
+              href="/w/demo/ai-readiness-assessment"
               className="inline-flex items-center justify-center px-6 py-3 rounded-lg border font-semibold hover:bg-muted transition-colors"
             >
               Try a Live Quiz
@@ -93,6 +94,40 @@ export default function Demo() {
                 <h3 className="font-semibold mb-2">{item.title}</h3>
                 <p className="text-sm text-muted-foreground">{item.description}</p>
               </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Live examples — moved up so visitors can try before reading feature details */}
+      <section className="py-16 px-4 bg-muted/30">
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center mb-10">
+            <div className="flex items-center justify-center gap-2 text-primary mb-3">
+              <Users className="w-5 h-5" />
+              <span className="text-sm font-semibold uppercase tracking-wide">Live Examples</span>
+            </div>
+            <h2 className="text-2xl font-bold mb-3">Try these demo quizzes</h2>
+            <p className="text-muted-foreground">
+              These are fully functional quizzes running on the platform right now.
+            </p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-6">
+            {DEMO_QUIZZES.map((quiz) => (
+              <Link
+                key={quiz.slug}
+                href={`/w/demo/${quiz.slug}`}
+                className="block bg-card border rounded-xl p-6 hover:shadow-md transition-shadow group"
+              >
+                <span className="inline-block text-xs font-semibold px-2 py-1 rounded-full bg-primary/10 text-primary mb-3">
+                  {quiz.tag}
+                </span>
+                <h3 className="font-semibold mb-2 group-hover:text-primary transition-colors">
+                  {quiz.title}
+                </h3>
+                <p className="text-sm text-muted-foreground">{quiz.description}</p>
+                <p className="text-xs text-primary font-medium mt-4">Take the quiz →</p>
+              </Link>
             ))}
           </div>
         </div>
@@ -241,40 +276,6 @@ export default function Demo() {
         </div>
       </section>
 
-      {/* Live examples */}
-      <section className="py-16 px-4">
-        <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-10">
-            <div className="flex items-center justify-center gap-2 text-primary mb-3">
-              <Users className="w-5 h-5" />
-              <span className="text-sm font-semibold uppercase tracking-wide">Live Examples</span>
-            </div>
-            <h2 className="text-2xl font-bold mb-3">Try these demo quizzes</h2>
-            <p className="text-muted-foreground">
-              These are fully functional quizzes running on the platform right now.
-            </p>
-          </div>
-          <div className="grid md:grid-cols-3 gap-6">
-            {DEMO_QUIZZES.map((quiz) => (
-              <Link
-                key={quiz.slug}
-                href={`/w/demo/${quiz.slug}`}
-                className="block bg-card border rounded-xl p-6 hover:shadow-md transition-shadow group"
-              >
-                <span className="inline-block text-xs font-semibold px-2 py-1 rounded-full bg-primary/10 text-primary mb-3">
-                  {quiz.tag}
-                </span>
-                <h3 className="font-semibold mb-2 group-hover:text-primary transition-colors">
-                  {quiz.title}
-                </h3>
-                <p className="text-sm text-muted-foreground">{quiz.description}</p>
-                <p className="text-xs text-primary font-medium mt-4">Take the quiz →</p>
-              </Link>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* Bottom CTA */}
       <section className="py-20 px-4 text-center bg-primary/5 border-t">
         <div className="max-w-2xl mx-auto">
@@ -283,12 +284,21 @@ export default function Demo() {
             Get in touch and we'll set up a custom quiz for your business — usually within 24
             hours.
           </p>
-          <a
-            href={CONTACT_MAILTO}
-            className="inline-flex items-center justify-center px-8 py-4 rounded-lg bg-primary text-primary-foreground font-semibold text-lg hover:bg-primary/90 transition-colors"
-          >
-            Contact Us to Get Started
-          </a>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <Link
+              href="/admin"
+              className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-lg bg-primary text-primary-foreground font-semibold text-lg hover:bg-primary/90 transition-colors"
+            >
+              Open the Admin Panel
+              <ArrowRight className="w-5 h-5" />
+            </Link>
+            <a
+              href={CONTACT_MAILTO}
+              className="inline-flex items-center justify-center px-8 py-4 rounded-lg border font-semibold text-lg hover:bg-muted transition-colors"
+            >
+              Contact Us
+            </a>
+          </div>
         </div>
       </section>
     </div>

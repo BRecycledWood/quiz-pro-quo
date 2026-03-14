@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
-import { CheckCircle2, ArrowRight, Zap, CreditCard, FileText } from "lucide-react";
+import { CheckCircle2, ArrowRight, Zap, CreditCard, FileText, Users, ShieldCheck, TrendingUp, GitBranch, Calculator } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -35,7 +35,7 @@ export default function Home() {
     <div className="min-h-screen flex flex-col bg-background font-sans">
       <header className="h-16 border-b flex items-center justify-between px-6 lg:px-12 sticky top-0 bg-background/80 backdrop-blur-md z-50">
         <div className="flex items-center gap-2 font-bold text-xl text-primary font-display">
-          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-primary-foreground">Q</div>
+          <img src="/logo.png" alt="QuizProQuo" className="h-8 w-auto" />
           QuizProQuo
         </div>
         <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-muted-foreground">
@@ -45,9 +45,9 @@ export default function Home() {
         </nav>
         <div className="flex items-center gap-4">
           <Link href="/admin">
-            <Button variant="ghost" size="sm">Dashboard</Button>
+            <Button variant="ghost" size="sm">Admin</Button>
           </Link>
-          <Link href="/admin">
+          <Link href="/demo">
             <Button size="sm">Get Started</Button>
           </Link>
         </div>
@@ -85,7 +85,7 @@ export default function Home() {
                 </Link>
                 <Link href="/admin">
                   <Button size="lg" variant="outline" className="h-14 px-8 text-base w-full sm:w-auto">
-                    Open Dashboard
+                    Admin
                   </Button>
                 </Link>
               </div>
@@ -186,12 +186,24 @@ export default function Home() {
               <h2 className="text-4xl font-bold font-display">Built for any industry.</h2>
               <p className="text-lg text-muted-foreground">From lead qualification to compliance checks, our platform adapts to your specific needs.</p>
             </div>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-4xl mx-auto">
-              {["Lead Qualification", "Compliance Checks", "Product Recommenders", "Onboarding Flows", "Risk Assessments", "Interactive ROI Calculators"].map((useCase) => (
-                <div key={useCase} className="flex items-center gap-3 p-3 rounded-lg border bg-background hover:border-primary/50 transition-colors">
-                  <CheckCircle2 className="w-5 h-5 text-primary shrink-0" />
-                  <span className="font-medium">{useCase}</span>
-                </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
+              {[
+                { icon: Users, title: "Lead Qualification", desc: "Score and segment prospects by fit before your team picks up the phone." },
+                { icon: ShieldCheck, title: "Compliance Checks", desc: "Automate regulated checklists with outcome-based guidance and audit trails." },
+                { icon: TrendingUp, title: "Product Recommenders", desc: "Guide customers to the right product in minutes with scored branching logic." },
+                { icon: GitBranch, title: "Onboarding Flows", desc: "Personalise the new user journey based on role, goals, and experience level." },
+                { icon: Zap, title: "Risk Assessments", desc: "Quantify exposure with weighted scoring and tiered outcomes that act on results." },
+                { icon: Calculator, title: "ROI Calculators", desc: "Show prospects the exact value they're leaving on the table — before they leave." },
+              ].map((item) => (
+                <Card key={item.title} className="border hover:border-primary/50 hover:shadow-md transition-all bg-background">
+                  <CardContent className="pt-6 px-6 pb-6 space-y-3">
+                    <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center text-primary">
+                      <item.icon className="w-5 h-5" />
+                    </div>
+                    <h3 className="font-bold text-base">{item.title}</h3>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{item.desc}</p>
+                  </CardContent>
+                </Card>
               ))}
             </div>
           </div>
@@ -203,7 +215,7 @@ export default function Home() {
             <h2 className="text-4xl font-bold font-display">Ready to build your revenue engine?</h2>
             <p className="text-xl text-muted-foreground">Start free. No credit card required.</p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Link href="/admin">
+              <Link href="/demo">
                 <Button size="lg" className="h-14 px-10 text-lg w-full sm:w-auto">Get Started for Free</Button>
               </Link>
               <a href={DEMO_MAILTO}>
@@ -215,10 +227,10 @@ export default function Home() {
       </main>
 
       <footer className="py-12 px-6 lg:px-12 border-t bg-muted/20">
-        <div className="max-w-7xl mx-auto grid md:grid-cols-4 gap-8 mb-12">
-          <div className="space-y-4">
+        <div className="max-w-7xl mx-auto grid md:grid-cols-5 gap-8 mb-12">
+          <div className="space-y-4 md:col-span-2">
             <div className="flex items-center gap-2 font-bold text-xl text-primary font-display">
-              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-primary-foreground">Q</div>
+              <img src="/logo.png" alt="QuizProQuo" className="h-8 w-auto" />
               QuizProQuo
             </div>
             <p className="text-sm text-muted-foreground">The enterprise quiz platform for modern businesses.</p>
@@ -232,17 +244,17 @@ export default function Home() {
             </ul>
           </div>
           <div>
-            <h4 className="font-bold mb-4">Resources</h4>
-            <ul className="space-y-2 text-sm text-muted-foreground">
-              <li>Documentation</li>
-              <li>Help Center</li>
-            </ul>
-          </div>
-          <div>
             <h4 className="font-bold mb-4">Contact</h4>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li><a href={DEMO_MAILTO} className="hover:text-foreground transition-colors">Request Demo</a></li>
               <li><a href="mailto:hello@howstud.io" className="hover:text-foreground transition-colors">hello@howstud.io</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4 className="font-bold mb-4">Legal</h4>
+            <ul className="space-y-2 text-sm text-muted-foreground">
+              <li><Link href="/privacy" className="hover:text-foreground transition-colors">Privacy Policy</Link></li>
+              <li><Link href="/terms" className="hover:text-foreground transition-colors">Terms of Service</Link></li>
             </ul>
           </div>
         </div>

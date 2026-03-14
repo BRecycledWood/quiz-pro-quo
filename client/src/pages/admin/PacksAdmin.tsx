@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -1032,6 +1032,9 @@ export default function PacksAdmin() {
         <Card>
           <CardHeader>
             <CardTitle>Pack Admin</CardTitle>
+            <CardDescription>
+              This is the control panel for managing your quiz platform. Enter your admin key to unlock the workspace, pack, and version editors below. Your admin key is set via the <code className="text-xs bg-muted px-1 py-0.5 rounded">ADMIN_KEY</code> environment variable on the server.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <Label htmlFor="admin-key">Admin key</Label>
@@ -1052,6 +1055,9 @@ export default function PacksAdmin() {
           <Card>
             <CardHeader>
               <CardTitle>Workspaces</CardTitle>
+              <CardDescription>
+                A <strong>Workspace</strong> is a tenant container — typically one per client or brand. Each workspace has its own slug (e.g. <code className="text-xs bg-muted px-1 py-0.5 rounded">acme-corp</code>) that appears in quiz URLs. Select a workspace to see its packs.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <Button onClick={loadWorkspaces} disabled={loadingWorkspaces || !adminKey}>
@@ -1087,6 +1093,9 @@ export default function PacksAdmin() {
             <Card>
               <CardHeader>
                 <CardTitle>Packs</CardTitle>
+                <CardDescription>
+                  A <strong>Pack</strong> is a single assessment (quiz). It belongs to a workspace and has its own slug (e.g. <code className="text-xs bg-muted px-1 py-0.5 rounded">ai-readiness</code>). The full URL to run a pack is <code className="text-xs bg-muted px-1 py-0.5 rounded">/w/&#123;workspace&#125;/&#123;pack&#125;</code>. Select a pack to edit its questions, scoring, and outcomes.
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex items-center gap-3">
@@ -1145,6 +1154,9 @@ export default function PacksAdmin() {
             <Card>
               <CardHeader>
                 <CardTitle>Versions</CardTitle>
+                <CardDescription>
+                  Each time you edit a pack's questions, scoring, or outcomes and click <strong>Save as new version</strong>, a snapshot is stored here. <strong>Publishing</strong> a version makes it live — visitors running the quiz will see that version. This lets you draft and test changes without affecting the live quiz.
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 {selectedPack ? (
@@ -1881,6 +1893,9 @@ export default function PacksAdmin() {
             <Card>
               <CardHeader>
                 <CardTitle>Clone Pack</CardTitle>
+                <CardDescription>
+                  Creates an exact copy of the currently selected pack — including all its questions, scoring rules, and outcomes — under a new name and slug. Useful for spinning up a similar assessment for a different client or use case without starting from scratch. You can clone into any workspace.
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="grid gap-3 md:grid-cols-2">

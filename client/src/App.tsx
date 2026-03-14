@@ -14,6 +14,8 @@ import QuizRunner from "@/pages/public/QuizRunner";
 import PackRunner from "@/pages/public/PackRunner";
 import Demo from "@/pages/public/Demo";
 import TopNav from "@/components/layout/TopNav";
+import PrivacyPolicy from "@/pages/legal/PrivacyPolicy";
+import Terms from "@/pages/legal/Terms";
 
 function Router() {
   return (
@@ -34,6 +36,8 @@ function Router() {
 
       {/* Public Routes */}
       <Route path="/demo" component={Demo} />
+      <Route path="/privacy" component={PrivacyPolicy} />
+      <Route path="/terms" component={Terms} />
       <Route path="/w/:workspaceSlug/:packSlug" component={PackRunner} />
       <Route path="/quiz/:slug" component={QuizRunner} />
 
