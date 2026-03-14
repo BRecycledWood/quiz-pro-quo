@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, KeyboardEvent } from "react";
 import { Link } from "wouter";
+import { Lock, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -445,6 +446,7 @@ function getThresholdIssues(rule: SimpleThreshold, outcomes: SimpleOutcome[]) {
 export default function PacksAdmin() {
   const [adminKey, setAdminKey] = useState("");
   const [adminKeyDraft, setAdminKeyDraft] = useState("");
+  const [keyLoaded, setKeyLoaded] = useState(false);
 
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -491,6 +493,7 @@ export default function PacksAdmin() {
       setAdminKey(stored);
       setAdminKeyDraft(stored);
     }
+    setKeyLoaded(true);
   }, []);
 
   const selectedWorkspace = useMemo(
@@ -1026,30 +1029,86 @@ export default function PacksAdmin() {
     }
   };
 
+  // Gate screen — shown to anyone without a saved admin key
+  if (!keyLoaded) return null;
+
+  if (!adminKey) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4">
+        <div className="w-full max-w-sm space-y-8">
+          <div className="text-center space-y-3">
+            <div className="flex justify-center">
+              <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                <Lock className="w-7 h-7" />
+              </div>
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold font-display">Admin Access</h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                This panel is for QuizProQuo platform operators only.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <Label htmlFor="gate-key">Admin key</Label>
+            <Input
+              id="gate-key"
+              type="password"
+              value={adminKeyDraft}
+              onChange={(e) => setAdminKeyDraft(e.target.value)}
+              onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
+                if (e.key === "Enter") handleSaveAdminKey();
+              }}
+              placeholder="Enter your admin key"
+              autoFocus
+            />
+            <Button className="w-full" onClick={handleSaveAdminKey}>
+              Enter
+            </Button>
+          </div>
+
+          <div className="text-center space-y-2 text-sm text-muted-foreground">
+            <p>Don't have an admin key?</p>
+            <a
+              href="mailto:hello@howstud.io?subject=QuizProQuo%20Admin%20Access"
+              className="text-primary hover:underline font-medium"
+            >
+              Contact us to get access →
+            </a>
+          </div>
+
+          <div className="text-center">
+            <Link href="/" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+              <ArrowLeft className="w-3 h-3" />
+              Back to home
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto w-full max-w-5xl px-6 py-10 space-y-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Pack Admin</CardTitle>
-            <CardDescription>
-              This is the control panel for managing your quiz platform. Enter your admin key to unlock the workspace, pack, and version editors below. Your admin key is set via the <code className="text-xs bg-muted px-1 py-0.5 rounded">ADMIN_KEY</code> environment variable on the server.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <Label htmlFor="admin-key">Admin key</Label>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <Input
-                id="admin-key"
-                type="password"
-                value={adminKeyDraft}
-                onChange={(event) => setAdminKeyDraft(event.target.value)}
-                placeholder="Enter ADMIN_KEY"
-              />
-              <Button onClick={handleSaveAdminKey}>Save</Button>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold">Pack Admin</h1>
+            <p className="text-sm text-muted-foreground">Manage workspaces, packs, and quiz versions.</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              localStorage.removeItem(ADMIN_KEY_STORAGE);
+              setAdminKey("");
+              setAdminKeyDraft("");
+            }}
+          >
+            Sign out
+          </Button>
+        </div>
 
         <div className="grid gap-6 md:grid-cols-[240px,1fr]">
           <Card>
