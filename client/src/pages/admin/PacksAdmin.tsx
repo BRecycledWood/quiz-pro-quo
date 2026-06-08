@@ -152,6 +152,14 @@ function createId() {
   return `id_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function deepClone<T>(value: T): T {
   if (typeof structuredClone === "function") {
     return structuredClone(value);
@@ -452,11 +460,19 @@ export default function PacksAdmin() {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
+  const [newWorkspaceName, setNewWorkspaceName] = useState("");
+  const [newWorkspaceSlug, setNewWorkspaceSlug] = useState("");
+  const [createWorkspaceLoading, setCreateWorkspaceLoading] = useState(false);
+  const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
 
   const [packs, setPacks] = useState<Pack[]>([]);
   const [packsError, setPacksError] = useState<string | null>(null);
   const [loadingPacks, setLoadingPacks] = useState(false);
   const [selectedPackId, setSelectedPackId] = useState<string>("");
+  const [newPackName, setNewPackName] = useState("");
+  const [newPackSlug, setNewPackSlug] = useState("");
+  const [createPackLoading, setCreatePackLoading] = useState(false);
+  const [createPackError, setCreatePackError] = useState<string | null>(null);
 
   const [versions, setVersions] = useState<PackVersion[]>([]);
   const [versionsError, setVersionsError] = useState<string | null>(null);
@@ -601,6 +617,89 @@ export default function PacksAdmin() {
       setPacksError("Unable to load packs");
     } finally {
       setLoadingPacks(false);
+    }
+  };
+
+  const handleCreateWorkspace = async () => {
+    const name = newWorkspaceName.trim();
+    const slug = slugify(newWorkspaceSlug || newWorkspaceName);
+    if (!name || !slug) {
+      setCreateWorkspaceError("Workspace name and slug are required.");
+      return;
+    }
+
+    setCreateWorkspaceLoading(true);
+    setCreateWorkspaceError(null);
+
+    try {
+      const response = await fetch("/api/admin/workspaces", {
+        method: "POST",
+        headers: {
+          ...authHeaders,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name, slug }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json()) as { message?: string };
+        setCreateWorkspaceError(payload?.message ?? "Unable to create workspace");
+        return;
+      }
+
+      const payload = (await response.json()) as { workspace?: Workspace };
+      setNewWorkspaceName("");
+      setNewWorkspaceSlug("");
+      await loadWorkspaces();
+      if (payload.workspace?.id) {
+        setSelectedWorkspaceId(payload.workspace.id);
+      }
+    } catch (error) {
+      setCreateWorkspaceError("Unable to create workspace");
+    } finally {
+      setCreateWorkspaceLoading(false);
+    }
+  };
+
+  const handleCreatePack = async () => {
+    if (!selectedWorkspaceId) return;
+    const name = newPackName.trim();
+    const slug = slugify(newPackSlug || newPackName);
+    if (!name || !slug) {
+      setCreatePackError("Pack name and slug are required.");
+      return;
+    }
+
+    setCreatePackLoading(true);
+    setCreatePackError(null);
+
+    try {
+      const response = await fetch(`/api/admin/workspaces/${selectedWorkspaceId}/packs`, {
+        method: "POST",
+        headers: {
+          ...authHeaders,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name, slug, isPaid: false }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json()) as { message?: string };
+        setCreatePackError(payload?.message ?? "Unable to create pack");
+        return;
+      }
+
+      const payload = (await response.json()) as { pack?: Pack };
+      setNewPackName("");
+      setNewPackSlug("");
+      await loadPacks(selectedWorkspaceId);
+      if (payload.pack?.id) {
+        setSelectedPackId(payload.pack.id);
+      }
+    } catch (error) {
+      setCreatePackError("Unable to create pack");
+    } finally {
+      setCreatePackLoading(false);
     }
   };
 
@@ -1119,6 +1218,43 @@ export default function PacksAdmin() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
+              <div className="rounded-lg border bg-muted/20 p-3 space-y-3">
+                <div className="space-y-1">
+                  <Label htmlFor="new-workspace-name">New workspace</Label>
+                  <Input
+                    id="new-workspace-name"
+                    value={newWorkspaceName}
+                    onChange={(e) => {
+                      setNewWorkspaceName(e.target.value);
+                      if (!newWorkspaceSlug) setCreateWorkspaceError(null);
+                    }}
+                    placeholder="Client or brand name"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="new-workspace-slug">Slug</Label>
+                  <Input
+                    id="new-workspace-slug"
+                    value={newWorkspaceSlug}
+                    onChange={(e) => {
+                      setNewWorkspaceSlug(slugify(e.target.value));
+                      setCreateWorkspaceError(null);
+                    }}
+                    placeholder={slugify(newWorkspaceName) || "client-slug"}
+                  />
+                </div>
+                <Button
+                  className="w-full"
+                  onClick={handleCreateWorkspace}
+                  disabled={createWorkspaceLoading || !adminKey}
+                >
+                  {createWorkspaceLoading ? "Creating..." : "Create Workspace"}
+                </Button>
+                {createWorkspaceError ? (
+                  <p className="text-xs text-destructive">{createWorkspaceError}</p>
+                ) : null}
+              </div>
+
               <Button onClick={loadWorkspaces} disabled={loadingWorkspaces || !adminKey}>
                 {loadingWorkspaces ? "Loading..." : "Refresh"}
               </Button>
@@ -1157,6 +1293,44 @@ export default function PacksAdmin() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
+                <div className="rounded-lg border bg-muted/20 p-3 space-y-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="new-pack-name">New pack</Label>
+                    <Input
+                      id="new-pack-name"
+                      value={newPackName}
+                      onChange={(e) => {
+                        setNewPackName(e.target.value);
+                        if (!newPackSlug) setCreatePackError(null);
+                      }}
+                      placeholder="Assessment name"
+                      disabled={!selectedWorkspaceId}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="new-pack-slug">Slug</Label>
+                    <Input
+                      id="new-pack-slug"
+                      value={newPackSlug}
+                      onChange={(e) => {
+                        setNewPackSlug(slugify(e.target.value));
+                        setCreatePackError(null);
+                      }}
+                      placeholder={slugify(newPackName) || "assessment-slug"}
+                      disabled={!selectedWorkspaceId}
+                    />
+                  </div>
+                  <Button
+                    onClick={handleCreatePack}
+                    disabled={createPackLoading || !selectedWorkspaceId}
+                  >
+                    {createPackLoading ? "Creating..." : "Create Pack"}
+                  </Button>
+                  {createPackError ? (
+                    <p className="text-xs text-destructive">{createPackError}</p>
+                  ) : null}
+                </div>
+
                 <div className="flex items-center gap-3">
                   <Button
                     onClick={() => loadPacks(selectedWorkspaceId)}
