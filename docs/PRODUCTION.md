@@ -2,16 +2,16 @@
 
 ## Recommended Host
 
-Use Render for the first-user production deployment.
+Use Koyeb for the first-user production deployment if Render paid services are not available.
 
 Why:
 
 - QPQ is a long-running Node/Express app, not a static site.
 - QPQ needs persistent PostgreSQL.
-- The repo has a `render.yaml` Blueprint that can provision the web service and database together.
-- Render can inject the database connection string into `DATABASE_URL`.
+- Koyeb supports GitHub-driven Node.js deployments and Dockerfile builds.
+- Koyeb has a free web service path.
 
-Railway is also viable. Hostinger can work, but it is not the shortest path because managed Hostinger web hosting still leaves PostgreSQL as a separate concern unless you run and maintain a VPS.
+Render is still a good paid option and the repo still includes `render.yaml`. Railway is also viable. Hostinger can work, but it is not the shortest path because managed Hostinger web hosting still leaves PostgreSQL as a separate concern unless you run and maintain a VPS.
 
 ## Required Services
 

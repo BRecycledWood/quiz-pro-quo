@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.DS_Store
+.env
+.env.*
+!.env.example
+deliverables
+presentation_build
+server/public
+*.tar.gz
