@@ -49,8 +49,13 @@ Required:
 Optional:
 
 - `STRIPE_SECRET_KEY=<stripe secret key>`
-- `ZOHO_EMAIL=<sending mailbox>`
-- `ZOHO_PASSWORD=<mailbox app password>`
+- `SMTP_HOST=<smtp host>`
+- `SMTP_PORT=587`
+- `SMTP_SECURE=false`
+- `SMTP_USER=<smtp username>`
+- `SMTP_PASSWORD=<smtp password>`
+- `EMAIL_FROM=<verified sender email>`
+- `LEAD_NOTIFICATION_EMAIL=<internal lead recipient>`
 
 Do not set `ALLOW_MEMORY_STORAGE=true` for first users. That flag is only for temporary non-persistent demos.
 
@@ -82,7 +87,8 @@ Expected `/healthz`:
 {
   "ok": true,
   "storage": "postgres",
-  "publicAppUrlConfigured": true
+  "publicAppUrlConfigured": true,
+  "emailConfigured": true
 }
 ```
 

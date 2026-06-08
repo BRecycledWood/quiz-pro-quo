@@ -57,6 +57,7 @@ type PublicPackResponse = {
   };
   definition: PackDefinition;
   publicAppUrlConfigured: boolean;
+  emailConfigured: boolean;
 };
 
 type StatusTone = "pass" | "caution" | "fail";
@@ -426,7 +427,12 @@ export default function PackRunner() {
     const payload: StoredAnswersPayload = { answers, encodedAnswersBase64Url: encodedAnswers, createdAt: Date.now() };
     localStorage.setItem(packStorageKey(workspaceSlug, packSlug), JSON.stringify(payload));
     setPendingResult(evaluation);
-    setShowEmailGate(true);
+    if (data?.emailConfigured) {
+      setShowEmailGate(true);
+    } else {
+      setResult(evaluation);
+      postSubmission(null, null, evaluation);
+    }
   };
 
   const handleEmailGateSubmit = (email: string, firstName: string) => {

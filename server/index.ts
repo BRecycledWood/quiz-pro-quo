@@ -28,7 +28,12 @@ app.get("/healthz", (_req, res) => {
     storage: process.env.DATABASE_URL ? "postgres" : "memory",
     publicAppUrlConfigured: Boolean(process.env.PUBLIC_APP_URL),
     stripeConfigured: Boolean(process.env.STRIPE_SECRET_KEY),
-    emailConfigured: Boolean(process.env.ZOHO_EMAIL && process.env.ZOHO_PASSWORD),
+    emailConfigured: Boolean(
+      process.env.SMTP_HOST &&
+      process.env.SMTP_USER &&
+      process.env.SMTP_PASSWORD &&
+      process.env.EMAIL_FROM,
+    ),
   });
 });
 

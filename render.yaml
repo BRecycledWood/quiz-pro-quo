@@ -21,9 +21,19 @@ services:
         value: "false"
       - key: STRIPE_SECRET_KEY
         sync: false
-      - key: ZOHO_EMAIL
+      - key: SMTP_HOST
         sync: false
-      - key: ZOHO_PASSWORD
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_SECURE
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: LEAD_NOTIFICATION_EMAIL
         sync: false
 
 databases:

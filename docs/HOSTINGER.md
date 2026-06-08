@@ -40,8 +40,13 @@ Optional:
 
 ```bash
 STRIPE_SECRET_KEY=
-ZOHO_EMAIL=
-ZOHO_PASSWORD=
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=
+SMTP_PASSWORD=
+EMAIL_FROM=
+LEAD_NOTIFICATION_EMAIL=
 ```
 
 Do not set `ALLOW_MEMORY_STORAGE=true` for first users.
@@ -95,7 +100,8 @@ Expected `/healthz`:
 {
   "ok": true,
   "storage": "postgres",
-  "publicAppUrlConfigured": true
+  "publicAppUrlConfigured": true,
+  "emailConfigured": true
 }
 ```
 
@@ -105,3 +111,4 @@ Expected `/healthz`:
 - App fails on startup with `DATABASE_URL is required in production`: add the database connection string.
 - Hostinger cannot find an entry file: use Start command `npm start`.
 - Env vars do not appear after editing: use Hostinger's redeploy flow after saving environment variables.
+- Emails are not sending: make sure all SMTP variables are configured and `/healthz` shows `emailConfigured: true`.

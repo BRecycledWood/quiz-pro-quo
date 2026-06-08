@@ -23,7 +23,7 @@ Render, Koyeb, and Railway can also work, but they are blocked right now by subs
 - PostgreSQL database
 - DNS for `qproquo.howstud.io`
 - Optional: Stripe for paid PDF unlocks
-- Optional: Zoho SMTP credentials for emailed PDF reports and lead notifications
+- Optional: SMTP credentials for emailed PDF reports and lead notifications
 
 ## Environment Variables
 
@@ -37,8 +37,13 @@ Required for first-user production:
 Optional:
 
 - `STRIPE_SECRET_KEY=<stripe secret key>`
-- `ZOHO_EMAIL=<sending mailbox>`
-- `ZOHO_PASSWORD=<mailbox app password>`
+- `SMTP_HOST=<smtp host>`
+- `SMTP_PORT=587`
+- `SMTP_SECURE=false`
+- `SMTP_USER=<smtp username>`
+- `SMTP_PASSWORD=<smtp password>`
+- `EMAIL_FROM=<verified sender email>`
+- `LEAD_NOTIFICATION_EMAIL=<internal lead recipient>`
 - `SEED_DEMO_DATA=true` only when intentionally seeding demo data
 
 Do not run first-user production without `DATABASE_URL`. The app now fails fast in production unless `ALLOW_MEMORY_STORAGE=true` is explicitly set for a non-persistent demo.
@@ -62,7 +67,7 @@ npm start
    - Both should show the `free` plan.
 5. Enter the prompted secret values:
    - `STRIPE_SECRET_KEY` if paid PDFs are enabled
-   - `ZOHO_EMAIL` and `ZOHO_PASSWORD` if emailed reports are enabled
+   - SMTP variables if emailed reports are enabled
 6. Deploy the Blueprint.
 7. Add the custom domain `qproquo.howstud.io` to the web service.
 8. Create the DNS record Render provides.
@@ -92,6 +97,7 @@ Expected `/healthz`:
 - `ok: true`
 - `storage: "postgres"`
 - `publicAppUrlConfigured: true`
+- `emailConfigured: true` if emailed PDF reports are enabled
 
 ## First Launch Checklist
 
@@ -104,5 +110,5 @@ Expected `/healthz`:
 - A public pack opens at `/w/<workspace>/<pack>`
 - A test submission appears in the admin dashboard
 - PDF download works
-- Email delivery works if Zoho is configured
+- Email delivery works if SMTP is configured
 - Stripe checkout works if paid packs are enabled

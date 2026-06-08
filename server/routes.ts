@@ -125,6 +125,12 @@ export async function registerRoutes(
       },
       definition: version.definition,
       publicAppUrlConfigured: Boolean(process.env.PUBLIC_APP_URL),
+      emailConfigured: Boolean(
+        process.env.SMTP_HOST &&
+        process.env.SMTP_USER &&
+        process.env.SMTP_PASSWORD &&
+        process.env.EMAIL_FROM,
+      ),
     });
   });
 

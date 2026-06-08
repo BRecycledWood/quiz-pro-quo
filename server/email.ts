@@ -1,14 +1,43 @@
 import nodemailer from "nodemailer";
 
+type EmailConfig = {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+  from: string;
+  leadTo: string;
+};
+
+function getEmailConfig(): EmailConfig | null {
+  const host = process.env.SMTP_HOST;
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASSWORD;
+  const from = process.env.EMAIL_FROM;
+
+  if (!host || !user || !pass || !from) return null;
+
+  const port = Number(process.env.SMTP_PORT ?? 587);
+  return {
+    host,
+    port: Number.isFinite(port) ? port : 587,
+    secure: process.env.SMTP_SECURE === "true" || port === 465,
+    user,
+    pass,
+    from,
+    leadTo: process.env.LEAD_NOTIFICATION_EMAIL || from,
+  };
+}
+
 function getTransporter() {
-  const user = process.env.ZOHO_EMAIL;
-  const pass = process.env.ZOHO_PASSWORD;
-  if (!user || !pass) return null;
+  const config = getEmailConfig();
+  if (!config) return null;
   return nodemailer.createTransport({
-    host: "smtp.zoho.com",
-    port: 465,
-    secure: true,
-    auth: { user, pass },
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    auth: { user: config.user, pass: config.pass },
   });
 }
 
@@ -32,8 +61,9 @@ export async function sendResultsEmail(params: {
   packSlug: string;
 }): Promise<void> {
   const transporter = getTransporter();
+  const config = getEmailConfig();
   if (!transporter) {
-    console.warn("[email] ZOHO_EMAIL or ZOHO_PASSWORD not set — skipping sendResultsEmail");
+    console.warn("[email] SMTP email configuration not set — skipping sendResultsEmail");
     return;
   }
 
@@ -78,7 +108,7 @@ export async function sendResultsEmail(params: {
 
   try {
     await transporter.sendMail({
-      from: `"${params.workspaceName}" <${process.env.ZOHO_EMAIL}>`,
+      from: `"${params.workspaceName}" <${config!.from}>`,
       to: params.to,
       subject: `Your ${params.packName} Results`,
       html,
@@ -105,8 +135,9 @@ export async function sendLeadNotification(params: {
   submissionId: string;
 }): Promise<void> {
   const transporter = getTransporter();
+  const config = getEmailConfig();
   if (!transporter) {
-    console.warn("[email] ZOHO_EMAIL or ZOHO_PASSWORD not set — skipping sendLeadNotification");
+    console.warn("[email] SMTP email configuration not set — skipping sendLeadNotification");
     return;
   }
 
@@ -135,8 +166,8 @@ export async function sendLeadNotification(params: {
 
   try {
     await transporter.sendMail({
-      from: `"QuizProQuo Leads" <${process.env.ZOHO_EMAIL}>`,
-      to: "hello@howstud.io",
+      from: `"QuizProQuo Leads" <${config!.from}>`,
+      to: config!.leadTo,
       subject: `New Lead — ${params.packName}: ${params.leadEmail}`,
       html,
     });
