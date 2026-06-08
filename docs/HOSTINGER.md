@@ -6,7 +6,7 @@ Use this path if you already have a Hostinger plan that supports Node.js web app
 
 - Hostinger: Node.js web app hosting for QPQ.
 - Supabase or Neon: external PostgreSQL database.
-- Hostinger DNS/domain: `qproquo.howstud.io`.
+- Hostinger DNS/domain: `tryqpq.com`.
 
 Hostinger Web/Cloud plans do not include PostgreSQL. Hostinger's documented PostgreSQL path is VPS. For the fastest first-user launch, keep the app on Hostinger and use an external managed Postgres database.
 
@@ -30,7 +30,7 @@ Add these in Hostinger during deployment or in the app's Environment Variables s
 
 ```bash
 NODE_ENV=production
-PUBLIC_APP_URL=https://qproquo.howstud.io
+PUBLIC_APP_URL=https://tryqpq.com
 DATABASE_URL=<supabase-or-neon-postgres-connection-string>
 ADMIN_KEY=<long-random-secret>
 SEED_DEMO_DATA=false
@@ -76,7 +76,7 @@ The QPQ server creates its required tables and indexes on startup when `DATABASE
 5. Deploy.
 6. Open the temporary Hostinger URL first.
 7. Check `/healthz`.
-8. Point `qproquo.howstud.io` to the deployed app.
+8. Point `tryqpq.com` to the deployed app.
 
 ## Smoke Tests
 
@@ -90,8 +90,8 @@ curl -I https://<temporary-hostinger-domain>/
 Production domain:
 
 ```bash
-curl -s https://qproquo.howstud.io/healthz
-curl -I https://qproquo.howstud.io/
+curl -s https://tryqpq.com/healthz
+curl -I https://tryqpq.com/
 ```
 
 Expected `/healthz`:

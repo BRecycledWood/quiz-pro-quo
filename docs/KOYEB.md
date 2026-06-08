@@ -15,7 +15,7 @@ Use:
 
 - Koyeb Web Service for the QPQ app.
 - Koyeb Postgres if available in your account, otherwise Supabase Free Postgres.
-- `qproquo.howstud.io` as the custom domain.
+- `tryqpq.com` as the custom domain.
 
 ## App Service
 
@@ -41,7 +41,7 @@ npm start
 Required:
 
 - `NODE_ENV=production`
-- `PUBLIC_APP_URL=https://qproquo.howstud.io`
+- `PUBLIC_APP_URL=https://tryqpq.com`
 - `DATABASE_URL=<postgres connection string>`
 - `ADMIN_KEY=<long random secret>`
 - `SEED_DEMO_DATA=false`
@@ -77,8 +77,8 @@ The QPQ server creates its required tables and indexes on startup when `DATABASE
 After deploy:
 
 ```bash
-curl -s https://qproquo.howstud.io/healthz
-curl -I https://qproquo.howstud.io/
+curl -s https://tryqpq.com/healthz
+curl -I https://tryqpq.com/
 ```
 
 Expected `/healthz`:
@@ -94,4 +94,4 @@ Expected `/healthz`:
 
 ## DNS
 
-Add `qproquo.howstud.io` as a custom domain in Koyeb, then create the DNS record Koyeb provides in the DNS manager for `howstud.io`.
+Add `tryqpq.com` as a custom domain in Koyeb, then create the DNS record Koyeb provides in the DNS manager for `tryqpq.com`.

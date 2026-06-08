@@ -21,7 +21,7 @@ Render, Koyeb, and Railway can also work, but they are blocked right now by subs
 
 - Node.js host that can run `npm start`
 - PostgreSQL database
-- DNS for `qproquo.howstud.io`
+- DNS for `tryqpq.com`
 - Optional: Stripe for paid PDF unlocks
 - Optional: SMTP credentials for emailed PDF reports and lead notifications
 
@@ -30,7 +30,7 @@ Render, Koyeb, and Railway can also work, but they are blocked right now by subs
 Required for first-user production:
 
 - `NODE_ENV=production`
-- `PUBLIC_APP_URL=https://qproquo.howstud.io`
+- `PUBLIC_APP_URL=https://tryqpq.com`
 - `DATABASE_URL=postgresql://...`
 - `ADMIN_KEY=<long random secret>`
 
@@ -69,7 +69,7 @@ npm start
    - `STRIPE_SECRET_KEY` if paid PDFs are enabled
    - SMTP variables if emailed reports are enabled
 6. Deploy the Blueprint.
-7. Add the custom domain `qproquo.howstud.io` to the web service.
+7. Add the custom domain `tryqpq.com` to the web service.
 8. Create the DNS record Render provides.
 9. Confirm `/healthz` reports `storage: "postgres"` and `publicAppUrlConfigured: true`.
 
@@ -88,8 +88,8 @@ npm run db:push
 ## Smoke Tests
 
 ```bash
-curl -s https://qproquo.howstud.io/healthz
-curl -I https://qproquo.howstud.io/
+curl -s https://tryqpq.com/healthz
+curl -I https://tryqpq.com/
 ```
 
 Expected `/healthz`:
@@ -101,7 +101,7 @@ Expected `/healthz`:
 
 ## First Launch Checklist
 
-- DNS resolves for `qproquo.howstud.io`
+- DNS resolves for `tryqpq.com`
 - SSL is active
 - `DATABASE_URL` is configured
 - `ADMIN_KEY` is stored securely

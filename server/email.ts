@@ -98,7 +98,7 @@ export async function sendResultsEmail(params: {
           <p style="font-size:14px;color:#6b7280;margin:24px 0 0;">Your full personalized report is attached to this email.</p>
         </td></tr>
         <tr><td style="padding:16px 32px 28px;border-top:1px solid #f1f5f9;">
-          <p style="margin:0;font-size:12px;color:#9ca3af;">Powered by <a href="https://qproquo.howstud.io" style="color:#6366f1;text-decoration:none;">QuizProQuo</a> · qproquo.howstud.io</p>
+          <p style="margin:0;font-size:12px;color:#9ca3af;">Powered by <a href="https://tryqpq.com" style="color:#6366f1;text-decoration:none;">QuizProQuo</a> · tryqpq.com</p>
         </td></tr>
       </table>
     </td></tr>
