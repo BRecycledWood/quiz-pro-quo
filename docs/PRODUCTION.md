@@ -2,16 +2,20 @@
 
 ## Recommended Host
 
-Use Koyeb for the first-user production deployment if Render paid services are not available.
+Use Render Free for the first-user MVP deployment if paid services are not available.
 
 Why:
 
 - QPQ is a long-running Node/Express app, not a static site.
 - QPQ needs persistent PostgreSQL.
-- Koyeb supports GitHub-driven Node.js deployments and Dockerfile builds.
-- Koyeb has a free web service path.
+- Render supports free Node web services.
+- Render supports free Postgres databases.
+- The repo has a `render.yaml` Blueprint that can provision the web service and database together.
+- Render can inject the database connection string into `DATABASE_URL`.
 
-Render is still a good paid option and the repo still includes `render.yaml`. Railway is also viable. Hostinger can work, but it is not the shortest path because managed Hostinger web hosting still leaves PostgreSQL as a separate concern unless you run and maintain a VPS.
+Important: Render Free is acceptable for a first-user MVP/demo, but it is not the final production posture. Free instances have limitations and can sleep or be constrained. Upgrade later when the app has paying usage.
+
+Koyeb, Railway, and Hostinger can also work, but each either requires payment, a subscription, or a split database setup.
 
 ## Required Services
 
@@ -47,7 +51,7 @@ npm run build
 npm start
 ```
 
-## Render Deployment
+## Render Free Blueprint Deployment
 
 1. Commit and push the repo to GitHub.
 2. In Render, create a new Blueprint from this repo.
@@ -55,6 +59,7 @@ npm start
 4. Confirm it will create:
    - `quiz-pro-quo` web service
    - `quiz-pro-quo-db` Postgres database
+   - Both should show the `free` plan.
 5. Enter the prompted secret values:
    - `STRIPE_SECRET_KEY` if paid PDFs are enabled
    - `ZOHO_EMAIL` and `ZOHO_PASSWORD` if emailed reports are enabled

@@ -2,7 +2,7 @@ services:
   - type: web
     name: quiz-pro-quo
     runtime: node
-    plan: starter
+    plan: free
     buildCommand: npm install --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /healthz
@@ -30,5 +30,5 @@ databases:
   - name: quiz-pro-quo-db
     databaseName: quiz_pro_quo
     user: quiz_pro_quo
-    plan: starter
+    plan: free
     ipAllowList: []
