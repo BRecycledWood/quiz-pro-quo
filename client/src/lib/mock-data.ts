@@ -1,3 +1,5 @@
+import { IPA_DISCOVERY_QUIZ } from "./ipa-discovery-quiz";
+
 export interface Organization {
   id: string;
   name: string;
@@ -109,6 +111,7 @@ export const MOCK_ORGS: Organization[] = [
 ];
 
 export const MOCK_QUIZZES: Quiz[] = [
+  IPA_DISCOVERY_QUIZ,
   {
     id: 'quiz-demo',
     orgId: 'org-1',

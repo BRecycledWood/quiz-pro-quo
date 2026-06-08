@@ -529,6 +529,21 @@ export async function registerRoutes(
       return res.status(400).json({ message: "answers is required" });
     }
 
+    let verifiedPaid = false;
+    let verifiedStripeSessionId: string | null = null;
+    if (paid && typeof stripeSessionId === "string") {
+      const stripe = getStripeClient();
+      if (stripe) {
+        try {
+          const session = await stripe.checkout.sessions.retrieve(stripeSessionId);
+          verifiedPaid = session.payment_status === "paid";
+          verifiedStripeSessionId = verifiedPaid ? stripeSessionId : null;
+        } catch (err) {
+          console.warn("[submit] Stripe session verification failed:", err);
+        }
+      }
+    }
+
     let submission;
     try {
       submission = await storage.createSubmission({
@@ -541,9 +556,9 @@ export async function registerRoutes(
         score: typeof score === "number" ? score : null,
         outcomeId: outcomeId ?? null,
         outcomeLabel: outcomeLabel ?? null,
-        paid: Boolean(paid),
-        stripeSessionId: stripeSessionId ?? null,
-        completedAt: email ? new Date() : null,
+        paid: verifiedPaid,
+        stripeSessionId: verifiedStripeSessionId,
+        completedAt: new Date(),
       });
     } catch (err) {
       console.error("[submit] createSubmission failed:", err);
@@ -601,7 +616,10 @@ export async function registerRoutes(
             submissionId: submission.id,
           });
 
-          await storage.updateSubmission(submission.id, { pdfSent: true });
+          await storage.updateSubmission(submission.id, {
+            pdfSent: true,
+            completedAt: new Date(),
+          });
         } catch (emailErr) {
           console.error("[submit] Email delivery failed:", emailErr);
         }

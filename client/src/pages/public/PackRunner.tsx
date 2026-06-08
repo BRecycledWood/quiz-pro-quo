@@ -4,7 +4,16 @@ import type { Answers, AnswerValue, PackDefinition, Outcome } from "@shared/pack
 import { evaluatePack, getVisibleQuestionIds } from "@shared/engine/interpreter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, ArrowRight, CheckCircle2, RotateCcw } from "lucide-react";
 
@@ -84,6 +93,18 @@ function getToneClasses(tone: StatusTone) {
     case "caution": return "bg-amber-500 text-white";
     default: return "bg-emerald-600 text-white";
   }
+}
+
+function isBooleanQuestion(type: PackDefinition["questions"][number]["type"]) {
+  return type === "boolean" || type === "yesno" || type === "yes_no" || type === "true_false";
+}
+
+function isSingleChoiceQuestion(type: PackDefinition["questions"][number]["type"]) {
+  return type === "single" || type === "select" || type === "dropdown";
+}
+
+function isTextQuestion(type: PackDefinition["questions"][number]["type"]) {
+  return type === "text" || type === "short_text" || type === "long_text" || type === "date";
 }
 
 function encodeAnswersBase64Url(answers: Answers): string {
@@ -330,8 +351,8 @@ export default function PackRunner() {
 
   const handleSelectAnswer = (questionId: string, value: AnswerValue) => {
     handleAnswerChange(questionId, value);
-    // Auto-advance for single-choice on non-last questions
-    if (!isLastQuestion) {
+    // Auto-advance only for button-based single choice questions.
+    if (!isLastQuestion && currentQuestion && (currentQuestion.type === "single" || currentQuestion.type === "select" || isBooleanQuestion(currentQuestion.type))) {
       if (autoAdvanceTimer.current) clearTimeout(autoAdvanceTimer.current);
       autoAdvanceTimer.current = setTimeout(() => {
         advanceToNext();
@@ -378,6 +399,25 @@ export default function PackRunner() {
         outcomeStatus: evaluation.outcome?.status ?? null,
       }),
     }).catch((err) => console.warn("[PackRunner] submit failed:", err));
+  };
+
+  const postPaidSubmission = (answersForSubmission: Answers, evaluation: ReturnType<typeof evaluatePack>, sessionId: string) => {
+    fetch(`/api/public/w/${workspaceSlug}/${packSlug}/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: null,
+        firstName: null,
+        answers: answersForSubmission,
+        score: evaluation.score,
+        outcomeId: evaluation.outcome?.id ?? null,
+        outcomeLabel: evaluation.outcome?.title ?? null,
+        outcomeMessage: evaluation.outcome?.description ?? null,
+        outcomeStatus: evaluation.outcome?.status ?? null,
+        paid: true,
+        stripeSessionId: sessionId,
+      }),
+    }).catch((err) => console.warn("[PackRunner] paid submit failed:", err));
   };
 
   const handleSeeResults = () => {
@@ -457,6 +497,7 @@ export default function PackRunner() {
       setAnswers(payload.answers);
       const evaluation = evaluatePack(definition, payload.answers);
       setResult(evaluation);
+      postPaidSubmission(payload.answers, evaluation, sessionIdParam);
       const dlKey = downloadFlagKey(sessionIdParam);
       if (!localStorage.getItem(dlKey)) {
         localStorage.setItem(dlKey, "1");
@@ -642,14 +683,24 @@ export default function PackRunner() {
   const currentAnswer = answers[currentQuestion.id];
   const hasAnswer = isAnswered(currentAnswer);
   const type = currentQuestion.type;
-  const isChoice = type === "single" || type === "select" || type === "boolean" || type === "yesno";
-  const isNumberInput = type === "number";
+  const isChoice = isSingleChoiceQuestion(type) || isBooleanQuestion(type);
+  const isAutoAdvanceChoice = type === "single" || type === "select" || isBooleanQuestion(type);
+  const isNumberInput = type === "number" || type === "percent";
+  const isMultiChoice = type === "multi";
+  const isLongText = type === "long_text";
+  const isDateInput = type === "date";
+  const isScaleInput = type === "scale_1_5" || type === "scale_1_10";
 
   const options = currentQuestion.options ?? [];
-  const yesNoOptions = [
-    { id: "yes", label: "Yes", value: true as AnswerValue },
-    { id: "no", label: "No", value: false as AnswerValue },
-  ];
+  const booleanLabels = type === "true_false"
+    ? [
+        { id: "true", label: "True", value: true as AnswerValue },
+        { id: "false", label: "False", value: false as AnswerValue },
+      ]
+    : [
+        { id: "yes", label: "Yes", value: true as AnswerValue },
+        { id: "no", label: "No", value: false as AnswerValue },
+      ];
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -675,9 +726,9 @@ export default function PackRunner() {
             </h2>
 
             {/* Yes/No */}
-            {(type === "boolean" || type === "yesno") ? (
+            {isBooleanQuestion(type) ? (
               <div className="grid grid-cols-2 gap-3">
-                {yesNoOptions.map((opt) => {
+                {booleanLabels.map((opt) => {
                   const selected = currentAnswer === opt.value;
                   return (
                     <button
@@ -721,6 +772,61 @@ export default function PackRunner() {
               </div>
             ) : null}
 
+            {type === "dropdown" ? (
+              <Select
+                value={typeof currentAnswer === "string" ? currentAnswer : undefined}
+                onValueChange={(value) => handleAnswerChange(currentQuestion.id, value)}
+              >
+                <SelectTrigger className="h-12 text-base">
+                  <SelectValue placeholder="Select an option" />
+                </SelectTrigger>
+                <SelectContent>
+                  {options.map((option) => {
+                    const optValue = option.value ?? option.id;
+                    return (
+                      <SelectItem key={option.id} value={String(optValue)}>
+                        {option.label}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            ) : null}
+
+            {isMultiChoice ? (
+              <div className="flex flex-col gap-2.5">
+                {options.map((option) => {
+                  const optValue = String(option.value ?? option.id);
+                  const selectedValues = Array.isArray(currentAnswer)
+                    ? currentAnswer.map(String)
+                    : [];
+                  const selected = selectedValues.includes(optValue);
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => {
+                        const nextValues = selected
+                          ? selectedValues.filter((value) => value !== optValue)
+                          : [...selectedValues, optValue];
+                        handleAnswerChange(currentQuestion.id, nextValues);
+                      }}
+                      className={`w-full text-left rounded-xl border-2 px-5 py-4 text-sm font-medium transition-all duration-150 ${
+                        selected
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-card hover:border-primary/50 hover:bg-muted/50"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Checkbox checked={selected} />
+                        <span>{option.label}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+
             {/* Number */}
             {isNumberInput ? (
               <Input
@@ -731,16 +837,59 @@ export default function PackRunner() {
                   const raw = e.target.value;
                   handleAnswerChange(currentQuestion.id, raw === "" ? null : Number(raw));
                 }}
-                placeholder="Enter a number"
+                placeholder={type === "percent" ? "Enter a percentage" : "Enter a number"}
                 autoFocus
               />
             ) : null}
 
-            {/* Text fallback */}
-            {!isChoice && !isNumberInput ? (
+            {isScaleInput ? (
+              <Input
+                type="range"
+                min={1}
+                max={type === "scale_1_5" ? 5 : 10}
+                step={1}
+                className="w-full"
+                value={typeof currentAnswer === "number" ? currentAnswer : 1}
+                onChange={(e) => handleAnswerChange(currentQuestion.id, Number(e.target.value))}
+              />
+            ) : null}
+
+            {isScaleInput ? (
+              <div className="text-center">
+                <p className="text-4xl font-bold text-foreground">
+                  {typeof currentAnswer === "number" ? currentAnswer : 1}
+                </p>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground mt-1">
+                  Selected value
+                </p>
+              </div>
+            ) : null}
+
+            {/* Text inputs */}
+            {isTextQuestion(type) && !isLongText && !isDateInput ? (
               <Input
                 type="text"
                 className="text-base h-12"
+                value={typeof currentAnswer === "string" ? currentAnswer : ""}
+                onChange={(e) => handleAnswerChange(currentQuestion.id, e.target.value)}
+                placeholder="Type your answer"
+                autoFocus
+              />
+            ) : null}
+
+            {isDateInput ? (
+              <Input
+                type="date"
+                className="text-base h-12"
+                value={typeof currentAnswer === "string" ? currentAnswer : ""}
+                onChange={(e) => handleAnswerChange(currentQuestion.id, e.target.value)}
+                autoFocus
+              />
+            ) : null}
+
+            {isLongText ? (
+              <Textarea
+                className="text-base min-h-32"
                 value={typeof currentAnswer === "string" ? currentAnswer : ""}
                 onChange={(e) => handleAnswerChange(currentQuestion.id, e.target.value)}
                 placeholder="Type your answer"
@@ -766,7 +915,7 @@ export default function PackRunner() {
           </Button>
 
           {/* For choice questions that auto-advance, show a subtle indicator on last question */}
-          {isChoice && isLastQuestion ? (
+          {isAutoAdvanceChoice && isLastQuestion ? (
             <Button
               onClick={handleSeeResults}
               disabled={!hasAnswer}
@@ -775,7 +924,7 @@ export default function PackRunner() {
               See Results
               <ArrowRight className="w-4 h-4" />
             </Button>
-          ) : isChoice ? (
+          ) : isAutoAdvanceChoice ? (
             <span className="text-xs text-muted-foreground">Select an option to continue</span>
           ) : (
             <Button

@@ -17,8 +17,8 @@ type QuestionKind = "yesno" | "number" | "select" | "text";
 
 function getQuestionKind(type: Question["type"] | undefined): QuestionKind {
   if (type === "number") return "number";
-  if (type === "boolean" || type === "yesno") return "yesno";
-  if (type === "single" || type === "select" || type === "multi") return "select";
+  if (type === "boolean" || type === "yesno" || type === "yes_no" || type === "true_false") return "yesno";
+  if (type === "single" || type === "select" || type === "dropdown" || type === "multi") return "select";
   return "text";
 }
 

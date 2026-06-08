@@ -13,7 +13,18 @@ export const storage = {
       localStorage.setItem(STORAGE_KEYS.QUIZZES, JSON.stringify(MOCK_QUIZZES));
       return MOCK_QUIZZES;
     }
-    return JSON.parse(data);
+    const quizzes = JSON.parse(data) as Quiz[];
+    const seededQuizzes = MOCK_QUIZZES.filter(
+      (seedQuiz) => !quizzes.some((quiz) => quiz.id === seedQuiz.id),
+    );
+
+    if (seededQuizzes.length > 0) {
+      const mergedQuizzes = [...seededQuizzes, ...quizzes];
+      localStorage.setItem(STORAGE_KEYS.QUIZZES, JSON.stringify(mergedQuizzes));
+      return mergedQuizzes;
+    }
+
+    return quizzes;
   },
 
   saveQuiz: (updatedQuiz: Quiz) => {

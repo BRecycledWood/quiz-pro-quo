@@ -6,9 +6,18 @@ export type QuestionType =
   | "multi"
   | "number"
   | "text"
+  | "short_text"
+  | "long_text"
+  | "date"
   | "boolean"
   | "yesno"
-  | "select";
+  | "yes_no"
+  | "true_false"
+  | "select"
+  | "dropdown"
+  | "percent"
+  | "scale_1_5"
+  | "scale_1_10";
 
 export interface QuestionOption {
   id: string;

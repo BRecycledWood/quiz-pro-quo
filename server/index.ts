@@ -22,6 +22,16 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
+app.get("/healthz", (_req, res) => {
+  res.json({
+    ok: true,
+    storage: process.env.DATABASE_URL ? "postgres" : "memory",
+    publicAppUrlConfigured: Boolean(process.env.PUBLIC_APP_URL),
+    stripeConfigured: Boolean(process.env.STRIPE_SECRET_KEY),
+    emailConfigured: Boolean(process.env.ZOHO_EMAIL && process.env.ZOHO_PASSWORD),
+  });
+});
+
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -62,7 +72,10 @@ app.use((req, res, next) => {
 (async () => {
   await registerRoutes(httpServer, app);
 
-  if (process.env.NODE_ENV !== "test") {
+  if (
+    process.env.NODE_ENV === "development" ||
+    process.env.SEED_DEMO_DATA === "true"
+  ) {
     const { seedDemoData } = await import("./seed");
     const { storage } = await import("./storage");
     seedDemoData(storage).catch(console.error);
