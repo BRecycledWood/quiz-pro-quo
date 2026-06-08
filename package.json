@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": ">=20 <26"
+  },
   "scripts": {
     "dev:client": "echo \"dev:client is not used in this setup. Run npm run dev.\"",
     "dev": "TMPDIR=/tmp NODE_ENV=development tsx server/index.ts",

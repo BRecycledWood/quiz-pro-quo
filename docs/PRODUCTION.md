@@ -2,20 +2,20 @@
 
 ## Recommended Host
 
-Use Render Free for the first-user MVP deployment if paid services are not available.
+Use Hostinger for the first-user MVP deployment if your existing plan supports Node.js web apps.
 
 Why:
 
 - QPQ is a long-running Node/Express app, not a static site.
 - QPQ needs persistent PostgreSQL.
-- Render supports free Node web services.
-- Render supports free Postgres databases.
-- The repo has a `render.yaml` Blueprint that can provision the web service and database together.
-- Render can inject the database connection string into `DATABASE_URL`.
+- You already have Hostinger available.
+- Hostinger supports GitHub-driven Node.js app deployment on supported plans.
+- QPQ can run as a single Node app with `npm run build` and `npm start`.
+- Use Supabase or Neon for PostgreSQL, because Hostinger Web/Cloud plans do not include Postgres.
 
-Important: Render Free is acceptable for a first-user MVP/demo, but it is not the final production posture. Free instances have limitations and can sleep or be constrained. Upgrade later when the app has paying usage.
+Important: Hostinger is acceptable for a first-user MVP if the Node.js app feature is available on your plan. The database must still be external unless you are using a Hostinger VPS.
 
-Koyeb, Railway, and Hostinger can also work, but each either requires payment, a subscription, or a split database setup.
+Render, Koyeb, and Railway can also work, but they are blocked right now by subscription or pricing constraints.
 
 ## Required Services
 
