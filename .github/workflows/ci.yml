@@ -73,4 +73,18 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Public-flow and Builder Studio browser E2E
-        run: npm run test:e2e
+        run: |
+          set +e
+          npm run test:e2e 2>&1 | tee "$RUNNER_TEMP/playwright-e2e.log"
+          result=${PIPESTATUS[0]}
+          if [ "$result" -ne 0 ]; then
+            python3 - "$RUNNER_TEMP/playwright-e2e.log" <<'PY'
+          import sys
+          from pathlib import Path
+          lines = Path(sys.argv[1]).read_text(errors="replace").splitlines()
+          summary = " | ".join(lines[-40:])
+          summary = summary.replace("%", "%25")
+          print(f"::error title=Browser E2E failure::{summary}")
+          PY
+          fi
+          exit "$result"
