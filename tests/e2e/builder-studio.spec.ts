@@ -60,7 +60,7 @@ test("Builder Studio authors, previews, brands, saves, and publishes without cre
   await page.getByLabel("Question prompt").fill("What would you like to work on?");
 
   await page.getByRole("button", { name: /Would you like to continue\?/ }).click();
-  await page.getByRole("tab", { name: "Logic" }).click();
+  await page.getByRole("tab", { name: "Logic", exact: true }).click();
   await expect(page.getByText("Advanced logic is available on every plan.")).toBeVisible();
   const routingSection = page.locator("details").filter({ hasText: "Route after this answer" });
   await routingSection.getByRole("button", { name: "Add route" }).click();
