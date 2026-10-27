@@ -31,6 +31,8 @@ export interface Question {
   type: QuestionType;
   options?: QuestionOption[];
   required?: boolean;
+  section?: string;
+  helpText?: string;
 }
 
 export interface Outcome {
@@ -101,6 +103,7 @@ export interface PricingRule {
 export interface PackDefinition {
   id?: string;
   name?: string;
+  description?: string;
   version?: number;
   outcomes: Outcome[];
   questions: Question[];

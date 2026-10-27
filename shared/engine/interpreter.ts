@@ -117,18 +117,26 @@ export function getVisibleQuestionIds(
   answers: Answers,
 ): string[] {
   const rules = pack.showIf ?? [];
+  const visible: string[] = [];
+  const visibleAnswers: Answers = { ...answers };
 
-  return pack.questions
-    .filter((question) => {
-      const questionRules = rules.filter(
-        (rule) => rule.questionId === question.id,
-      );
-      if (questionRules.length === 0) return true;
-      return questionRules.some((rule) =>
-        evaluateConditionGroup(rule.when, answers),
-      );
-    })
-    .map((question) => question.id);
+  // Question conditions commonly depend on earlier answers. Removing hidden answers
+  // as we walk the definition prevents stale responses from keeping later branches
+  // visible when a user changes an earlier answer.
+  for (const question of pack.questions) {
+    const questionRules = rules.filter((rule) => rule.questionId === question.id);
+    const isVisible = questionRules.length === 0 || questionRules.some((rule) =>
+      evaluateConditionGroup(rule.when, visibleAnswers),
+    );
+
+    if (isVisible) {
+      visible.push(question.id);
+    } else {
+      delete visibleAnswers[question.id];
+    }
+  }
+
+  return visible;
 }
 
 export function evaluatePack(
@@ -142,15 +150,19 @@ export function evaluatePack(
   reasons: string[];
 } {
   const visibleQuestionIds = getVisibleQuestionIds(pack, answers);
+  const visibleQuestionSet = new Set(visibleQuestionIds);
+  const effectiveAnswers = Object.fromEntries(
+    Object.entries(answers).filter(([questionId]) => visibleQuestionSet.has(questionId)),
+  ) as Answers;
   const disqualifiers = pack.disqualifiers ?? [];
   const reasons = disqualifiers
-    .filter((rule) => evaluateConditionGroup(rule.when, answers))
+    .filter((rule) => evaluateConditionGroup(rule.when, effectiveAnswers))
     .map((rule) => rule.reason);
   const disqualified = reasons.length > 0;
 
   const scoringRules = pack.scoring ?? [];
   const score = scoringRules.reduce((total, rule) => {
-    if (evaluateConditionGroup(rule.when, answers)) {
+    if (evaluateConditionGroup(rule.when, effectiveAnswers)) {
       return total + rule.points;
     }
     return total;

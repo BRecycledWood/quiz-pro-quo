@@ -48,6 +48,7 @@ export const packs = pgTable("packs", {
   publishedVersionId: varchar("published_version_id"),
   isPaid: boolean("is_paid").default(false).notNull(),
   stripePriceId: text("stripe_price_id"),
+  views: integer("views").default(0).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -78,6 +79,7 @@ export const submissions = pgTable("submissions", {
   outcomeId: text("outcome_id"),
   outcomeLabel: text("outcome_label"),
   paid: boolean("paid").notNull().default(false),
+  amountPaidCents: integer("amount_paid_cents").notNull().default(0),
   stripeSessionId: text("stripe_session_id"),
   pdfSent: boolean("pdf_sent").notNull().default(false),
   completedAt: timestamp("completed_at", { withTimezone: true }),

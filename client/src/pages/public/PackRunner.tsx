@@ -30,6 +30,9 @@ type StoredAnswersPayload = {
   answers: Answers;
   encodedAnswersBase64Url: string;
   createdAt: number;
+  submissionId?: string;
+  email?: string;
+  firstName?: string;
 };
 
 type PublicPackResponse = {
@@ -67,6 +70,16 @@ function isAnswered(value: AnswerValue | undefined): boolean {
   if (Array.isArray(value)) return value.length > 0;
   if (typeof value === "string") return value.trim().length > 0;
   return true;
+}
+
+function safeExternalUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function getStatusFromOutcome(outcome: Outcome | null, disqualified: boolean): {
@@ -133,17 +146,19 @@ function decodeAnswersBase64Url(encoded: string): Answers | null {
 
 function EmailGate({
   onSubmit,
-  onSkip,
+  isSubmitting,
+  submitError,
 }: {
   onSubmit: (email: string, firstName: string) => void;
-  onSkip: () => void;
+  isSubmitting: boolean;
+  submitError: string | null;
 }) {
   const [email, setEmail] = useState("");
   const [firstName, setFirstName] = useState("");
   const [emailError, setEmailError] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
     if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setEmailError("Please enter a valid email address.");
       return;
@@ -153,59 +168,56 @@ function EmailGate({
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center px-4">
+    <div className="min-h-screen bg-background flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-md space-y-6">
         <div className="text-center space-y-3">
           <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto">
             <CheckCircle2 className="w-8 h-8 text-emerald-600" />
           </div>
-          <h2 className="text-2xl font-bold">You're almost done.</h2>
+          <p className="text-xs font-semibold tracking-[0.18em] uppercase text-primary">One last step</p>
+          <h2 className="text-2xl font-bold">Unlock your results</h2>
           <p className="text-muted-foreground text-sm leading-relaxed">
-            Enter your details to unlock your personalised results and receive your PDF report by email.
+            Add your email to save your assessment and see your personalized results. We’ll send a PDF copy when email delivery is enabled.
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4 bg-card border rounded-2xl p-6">
+        <form onSubmit={handleSubmit} className="space-y-4 bg-card border rounded-2xl p-6 shadow-sm">
           <div className="space-y-1.5">
-            <label htmlFor="gate-firstname" className="text-sm font-medium">First name</label>
+            <label htmlFor="gate-firstname" className="text-sm font-medium">First name <span className="text-muted-foreground">(optional)</span></label>
             <Input
               id="gate-firstname"
               type="text"
               placeholder="First name"
               value={firstName}
-              onChange={(e) => setFirstName(e.target.value)}
+              maxLength={100}
+              onChange={(event) => setFirstName(event.target.value)}
             />
           </div>
           <div className="space-y-1.5">
             <label htmlFor="gate-email" className="text-sm font-medium">
-              Work email <span className="text-destructive">*</span>
+              Email address <span className="text-destructive">*</span>
             </label>
             <Input
               id="gate-email"
               type="email"
               placeholder="you@company.com"
               value={email}
-              onChange={(e) => { setEmail(e.target.value); setEmailError(""); }}
+              autoComplete="email"
+              required
+              onChange={(event) => { setEmail(event.target.value); setEmailError(""); }}
             />
             {emailError ? <p className="text-xs text-destructive">{emailError}</p> : null}
           </div>
-          <Button type="submit" className="w-full h-11 text-base">
-            Get My Results →
+          {submitError ? (
+            <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{submitError}</p>
+          ) : null}
+          <Button type="submit" className="w-full h-11 text-base" disabled={isSubmitting}>
+            {isSubmitting ? "Saving your results…" : "Get My Results"}
           </Button>
           <p className="text-center text-xs text-muted-foreground">
-            No spam. Your report is sent once, immediately.
+            Your details are stored securely with your assessment answers. No spam.
           </p>
         </form>
-
-        <div className="text-center">
-          <button
-            type="button"
-            onClick={onSkip}
-            className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
-          >
-            Skip — view results without report
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -238,6 +250,12 @@ export default function PackRunner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<typeof NOT_FOUND | typeof UNAVAILABLE | null>(null);
   const [answers, setAnswers] = useState<Answers>({});
+  const [hasStarted, setHasStarted] = useState(false);
+  const [startLoading, setStartLoading] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const [submissionId, setSubmissionId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [result, setResult] = useState<ReturnType<typeof evaluatePack> | null>(null);
   const [pendingResult, setPendingResult] = useState<ReturnType<typeof evaluatePack> | null>(null);
@@ -258,6 +276,7 @@ export default function PackRunner() {
   const sessionIdParam = searchParams.get("session_id");
   const answersParam = searchParams.get("answers");
   const autoresParam = searchParams.get("autores");
+  const isPreviewMode = searchParams.get("preview") === "1" || autoresParam === "1";
   const hasPaidSession = paidParam === "1" && Boolean(sessionIdParam);
 
   const prefillAnswers = useMemo(() => {
@@ -280,6 +299,12 @@ export default function PackRunner() {
       setError(null);
       setData(null);
       setAnswers({});
+      setHasStarted(false);
+      setStartLoading(false);
+      setStartError(null);
+      setSubmissionId(null);
+      setSubmitting(false);
+      setSubmitError(null);
       setResult(null);
       setPendingResult(null);
       setShowEmailGate(false);
@@ -287,7 +312,8 @@ export default function PackRunner() {
       setDownloadMessage(null);
       setCurrentQuestionIndex(0);
       try {
-        const response = await fetch(`/api/public/w/${workspaceSlug}/${packSlug}`);
+        const previewQuery = isPreviewMode ? "?preview=1" : "";
+        const response = await fetch(`/api/public/w/${workspaceSlug}/${packSlug}${previewQuery}`);
         if (!response.ok) {
           if (!cancelled) setError(response.status === 404 ? NOT_FOUND : UNAVAILABLE);
           return;
@@ -302,11 +328,11 @@ export default function PackRunner() {
     }
     load();
     return () => { cancelled = true; };
-  }, [workspaceSlug, packSlug]);
+  }, [workspaceSlug, packSlug, isPreviewMode]);
 
   const definition = data?.definition ?? null;
   const pricing = definition?.pricing;
-  const isPaidPack = Boolean(pricing?.isPaid);
+  const isPaidPack = !isPreviewMode && Boolean(pricing?.isPaid);
   const stripePriceId = typeof pricing?.stripePriceId === "string" ? pricing.stripePriceId : "";
   const stripeConfigured = stripePriceId.trim().length > 0 && stripePriceId !== STRIPE_PLACEHOLDER_PRICE;
   const publicAppUrlConfigured = Boolean(data?.publicAppUrlConfigured);
@@ -341,118 +367,179 @@ export default function PackRunner() {
 
   const autoAdvanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const handleStart = async () => {
+    setStartLoading(true);
+    setStartError(null);
+    if (isPreviewMode) {
+      setHasStarted(true);
+      setCurrentQuestionIndex(0);
+      setStartLoading(false);
+      return;
+    }
+    try {
+      const response = await fetch(`/api/public/w/${workspaceSlug}/${packSlug}/start`, {
+        method: "POST",
+      });
+      const payload = await response.json().catch(() => ({})) as { submissionId?: string; message?: string };
+      if (!response.ok || !payload.submissionId) {
+        throw new Error(payload.message ?? "Unable to start this assessment. Please try again.");
+      }
+      setSubmissionId(payload.submissionId);
+      setHasStarted(true);
+      setCurrentQuestionIndex(0);
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : "Unable to start this assessment. Please try again.");
+    } finally {
+      setStartLoading(false);
+    }
+  };
+
   const handleAnswerChange = (questionId: string, value: AnswerValue) => {
     setAnswers((prev) => ({ ...prev, [questionId]: value }));
+    setSubmitError(null);
   };
 
   const advanceToNext = () => {
-    setCardKey((k) => k + 1);
-    setCurrentQuestionIndex((prev) => prev + 1);
+    setCardKey((key) => key + 1);
+    setCurrentQuestionIndex((index) => index + 1);
   };
 
   const handleSelectAnswer = (questionId: string, value: AnswerValue) => {
     handleAnswerChange(questionId, value);
-    // Auto-advance only for button-based single choice questions.
-    if (!isLastQuestion && currentQuestion && (currentQuestion.type === "single" || currentQuestion.type === "select" || isBooleanQuestion(currentQuestion.type))) {
+    if (!isLastQuestion && currentQuestion && (
+      currentQuestion.type === "single" ||
+      currentQuestion.type === "select" ||
+      isBooleanQuestion(currentQuestion.type)
+    )) {
       if (autoAdvanceTimer.current) clearTimeout(autoAdvanceTimer.current);
-      autoAdvanceTimer.current = setTimeout(() => {
-        advanceToNext();
-      }, 320);
+      autoAdvanceTimer.current = setTimeout(advanceToNext, 320);
     }
   };
 
   const handleNext = () => {
-    if (!currentQuestion) return;
-    if (isLastQuestion) {
-      handleSeeResults();
-    } else {
-      advanceToNext();
-    }
+    if (!currentQuestion || (currentQuestion.required !== false && !isAnswered(answers[currentQuestion.id]))) return;
+    if (isLastQuestion) handleSeeResults();
+    else advanceToNext();
   };
 
   const handleBack = () => {
     if (safeIndex > 0) {
-      setCardKey((k) => k + 1);
-      setCurrentQuestionIndex((prev) => Math.max(0, prev - 1));
+      setCardKey((key) => key + 1);
+      setCurrentQuestionIndex((index) => Math.max(0, index - 1));
     }
   };
 
   const downloadPdf = (encoded: string, sessionId: string | null) => {
-    if (!encoded) return;
-    if (isPaidPack && !sessionId) return;
+    if (!encoded || (isPaidPack && !sessionId)) return;
     const pdfUrl = `/api/public/w/${workspaceSlug}/${packSlug}/pdf?answers=${encoded}${sessionId ? `&session_id=${encodeURIComponent(sessionId)}` : ""}`;
     window.location.href = pdfUrl;
   };
 
-  const postSubmission = (email: string | null, firstName: string | null, evaluation: ReturnType<typeof evaluatePack>) => {
-    if (!definition || !data) return;
-    fetch(`/api/public/w/${workspaceSlug}/${packSlug}/submit`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email,
-        firstName,
-        answers,
-        score: evaluation.score,
-        outcomeId: evaluation.outcome?.id ?? null,
-        outcomeLabel: evaluation.outcome?.title ?? null,
-        outcomeMessage: evaluation.outcome?.description ?? null,
-        outcomeStatus: evaluation.outcome?.status ?? null,
-      }),
-    }).catch((err) => console.warn("[PackRunner] submit failed:", err));
-  };
-
-  const postPaidSubmission = (answersForSubmission: Answers, evaluation: ReturnType<typeof evaluatePack>, sessionId: string) => {
-    fetch(`/api/public/w/${workspaceSlug}/${packSlug}/submit`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: null,
-        firstName: null,
-        answers: answersForSubmission,
-        score: evaluation.score,
-        outcomeId: evaluation.outcome?.id ?? null,
-        outcomeLabel: evaluation.outcome?.title ?? null,
-        outcomeMessage: evaluation.outcome?.description ?? null,
-        outcomeStatus: evaluation.outcome?.status ?? null,
-        paid: true,
-        stripeSessionId: sessionId,
-      }),
-    }).catch((err) => console.warn("[PackRunner] paid submit failed:", err));
+  const postPaidSubmission = async (
+    answersForSubmission: Answers,
+    sessionId: string,
+    stored: StoredAnswersPayload,
+  ) => {
+    if (!stored.submissionId || !stored.email) return;
+    try {
+      const response = await fetch(`/api/public/w/${workspaceSlug}/${packSlug}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submissionId: stored.submissionId,
+          email: stored.email,
+          firstName: stored.firstName ?? null,
+          answers: answersForSubmission,
+          paid: true,
+          stripeSessionId: sessionId,
+        }),
+      });
+      if (!response.ok) console.warn("[PackRunner] unable to record payment on the submission");
+    } catch (error) {
+      console.warn("[PackRunner] paid submission update failed:", error);
+    }
   };
 
   const handleSeeResults = () => {
     if (!definition) return;
     const evaluation = evaluatePack(definition, answers);
-    const payload: StoredAnswersPayload = { answers, encodedAnswersBase64Url: encodedAnswers, createdAt: Date.now() };
+    if (isPreviewMode) {
+      setPendingResult(null);
+      setResult(evaluation);
+      setShowEmailGate(false);
+      return;
+    }
+    const payload: StoredAnswersPayload = {
+      answers,
+      encodedAnswersBase64Url: encodedAnswers,
+      createdAt: Date.now(),
+      submissionId: submissionId ?? undefined,
+    };
     localStorage.setItem(packStorageKey(workspaceSlug, packSlug), JSON.stringify(payload));
     setPendingResult(evaluation);
-    if (data?.emailConfigured) {
-      setShowEmailGate(true);
-    } else {
-      setResult(evaluation);
-      postSubmission(null, null, evaluation);
+    setSubmitError(null);
+    setShowEmailGate(true);
+  };
+
+  const handleEmailGateSubmit = async (email: string, firstName: string) => {
+    if (!pendingResult || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const response = await fetch(`/api/public/w/${workspaceSlug}/${packSlug}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submissionId,
+          email,
+          firstName: firstName || null,
+          answers,
+        }),
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        id?: string;
+        success?: boolean;
+        message?: string;
+        evaluation?: ReturnType<typeof evaluatePack>;
+        emailConfigured?: boolean;
+      };
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.message ?? "We couldn't save your results. Please try again.");
+      }
+
+      const savedSubmissionId = payload.id ?? submissionId ?? undefined;
+      setSubmissionId(savedSubmissionId ?? null);
+      setSubmittedEmail(email);
+      setResult(payload.evaluation ?? pendingResult);
+      setShowEmailGate(false);
+      localStorage.setItem(packStorageKey(workspaceSlug, packSlug), JSON.stringify({
+        answers,
+        encodedAnswersBase64Url: encodedAnswers,
+        createdAt: Date.now(),
+        submissionId: savedSubmissionId,
+        email,
+        firstName,
+      } satisfies StoredAnswersPayload));
+      toast({
+        title: "Your results are ready",
+        description: payload.emailConfigured
+          ? `A PDF copy is being sent to ${email}.`
+          : "Your assessment has been saved. Email delivery is not configured on this service.",
+      });
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "We couldn't save your results. Please try again.");
+    } finally {
+      setSubmitting(false);
     }
-  };
-
-  const handleEmailGateSubmit = (email: string, firstName: string) => {
-    if (!pendingResult) return;
-    setSubmittedEmail(email);
-    setResult(pendingResult);
-    setShowEmailGate(false);
-    postSubmission(email, firstName || null, pendingResult);
-    toast({ title: `Your PDF report is on its way to ${email}`, description: "Check your inbox in a few minutes." });
-  };
-
-  const handleEmailGateSkip = () => {
-    if (!pendingResult) return;
-    setResult(pendingResult);
-    setShowEmailGate(false);
-    postSubmission(null, null, pendingResult);
   };
 
   const handleStartOver = () => {
     setAnswers({});
+    setHasStarted(false);
+    setStartError(null);
+    setSubmissionId(null);
+    setSubmitting(false);
+    setSubmitError(null);
     setResult(null);
     setPendingResult(null);
     setShowEmailGate(false);
@@ -460,7 +547,7 @@ export default function PackRunner() {
     setPaymentReturnError(null);
     setSubmittedEmail(null);
     setCurrentQuestionIndex(0);
-    setCardKey((k) => k + 1);
+    setCardKey((key) => key + 1);
   };
 
   const handleUnlockPdf = async () => {
@@ -501,9 +588,12 @@ export default function PackRunner() {
         return;
       }
       setAnswers(payload.answers);
+      setHasStarted(true);
+      setSubmissionId(payload.submissionId ?? null);
+      setSubmittedEmail(payload.email ?? null);
       const evaluation = evaluatePack(definition, payload.answers);
       setResult(evaluation);
-      postPaidSubmission(payload.answers, evaluation, sessionIdParam);
+      void postPaidSubmission(payload.answers, sessionIdParam, payload);
       const dlKey = downloadFlagKey(sessionIdParam);
       if (!localStorage.getItem(dlKey)) {
         localStorage.setItem(dlKey, "1");
@@ -562,7 +652,13 @@ export default function PackRunner() {
   }
 
   if (showEmailGate) {
-    return <EmailGate onSubmit={handleEmailGateSubmit} onSkip={handleEmailGateSkip} />;
+    return (
+      <EmailGate
+        onSubmit={handleEmailGateSubmit}
+        isSubmitting={submitting}
+        submitError={submitError}
+      />
+    );
   }
 
   // ── Result screen ──────────────────────────────────────────────────────────
@@ -575,12 +671,12 @@ export default function PackRunner() {
     const unlockDisabled = checkoutLoading || !stripeConfigured || !publicAppUrlConfigured;
 
     const actionList: Array<{ label: string; url?: string }> = [];
-    if (outcome?.ctaLabel) actionList.push({ label: outcome.ctaLabel, url: outcome.ctaUrl });
+    if (outcome?.ctaLabel) actionList.push({ label: outcome.ctaLabel, url: safeExternalUrl(outcome.ctaUrl) });
     const metaActions = (outcome?.metadata as Record<string, unknown> | undefined)?.actions;
     if (Array.isArray(metaActions)) metaActions.forEach((action) => {
       if (action && typeof action === "object") {
         const label = "label" in action ? String((action as Record<string, unknown>).label ?? "") : "";
-        const url = "url" in action ? String((action as Record<string, unknown>).url ?? "") : undefined;
+        const url = "url" in action ? safeExternalUrl((action as Record<string, unknown>).url) : undefined;
         if (label) actionList.push({ label, url });
       }
     });
@@ -591,7 +687,9 @@ export default function PackRunner() {
 
           {submittedEmail ? (
             <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 text-center">
-              ✉️ Your PDF report is on its way to <strong>{submittedEmail}</strong>
+              {data.emailConfigured
+                ? <>Your PDF report is being sent to <strong>{submittedEmail}</strong>.</>
+                : <>Your results were saved for <strong>{submittedEmail}</strong>.</>}
             </div>
           ) : null}
 
@@ -645,7 +743,8 @@ export default function PackRunner() {
             ) : null}
 
             {/* PDF */}
-            <div className="pt-2 border-t space-y-2">
+            {!isPreviewMode ? (
+              <div className="pt-2 border-t space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">PDF Report</p>
               {isPaidPack ? (
                 hasPaidSession
@@ -661,7 +760,8 @@ export default function PackRunner() {
               )}
               {checkoutError ? <p className="text-xs text-destructive text-center">{checkoutError}</p> : null}
               {downloadMessage ? <p className="text-xs text-muted-foreground text-center">{downloadMessage}</p> : null}
-            </div>
+              </div>
+            ) : null}
           </div>
 
           <button
@@ -671,6 +771,57 @@ export default function PackRunner() {
             <RotateCcw className="w-3.5 h-3.5" />
             Take again
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!hasStarted && autoresParam !== "1") {
+    const questionCount = visibleQuestions.length;
+    const estimatedMinutes = Math.max(1, Math.ceil(questionCount * 0.35));
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-background flex items-center justify-center px-4 py-12">
+        <div className="w-full max-w-2xl">
+          <Link href="/demo" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-8">
+            <ArrowLeft className="h-4 w-4" /> Back to examples
+          </Link>
+          <div className="rounded-3xl border bg-card shadow-xl shadow-primary/5 overflow-hidden">
+            <div className="h-2 bg-gradient-to-r from-primary via-blue-400 to-emerald-400" />
+            <div className="p-7 md:p-10 space-y-8">
+              <div className="space-y-4">
+                <Badge variant="secondary" className="rounded-full px-3 py-1">Personalized assessment</Badge>
+                <div className="space-y-3">
+                  <h1 className="text-3xl md:text-4xl font-bold tracking-tight">{definition.name ?? data.pack.name}</h1>
+                  {definition.description ? (
+                    <p className="text-muted-foreground leading-relaxed">{definition.description}</p>
+                  ) : (
+                    <p className="text-muted-foreground leading-relaxed">
+                      Answer a few focused questions to get a result tailored to your situation, plus clear next steps.
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl bg-muted/50 p-4">
+                  <p className="text-2xl font-bold">{questionCount}</p>
+                  <p className="text-sm text-muted-foreground">Questions</p>
+                </div>
+                <div className="rounded-2xl bg-muted/50 p-4">
+                  <p className="text-2xl font-bold">{estimatedMinutes} min</p>
+                  <p className="text-sm text-muted-foreground">Estimated time</p>
+                </div>
+              </div>
+              {startError ? <p role="alert" className="text-sm text-destructive">{startError}</p> : null}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                <Button size="lg" onClick={handleStart} disabled={startLoading || questionCount === 0} className="h-12 px-7">
+                  {startLoading ? "Preparing your assessment…" : "Start assessment"}
+                  {!startLoading ? <ArrowRight className="ml-2 h-4 w-4" /> : null}
+                </Button>
+                <p className="text-xs text-muted-foreground">Your progress is saved for this session. Results are unlocked with your email.</p>
+              </div>
+            </div>
+          </div>
+          <p className="mt-5 text-center text-xs text-muted-foreground">Powered by QuizProQuo · Secure, mobile-friendly assessments</p>
         </div>
       </div>
     );
@@ -688,6 +839,7 @@ export default function PackRunner() {
 
   const currentAnswer = answers[currentQuestion.id];
   const hasAnswer = isAnswered(currentAnswer);
+  const canContinue = currentQuestion.required === false || hasAnswer;
   const type = currentQuestion.type;
   const isChoice = isSingleChoiceQuestion(type) || isBooleanQuestion(type);
   const isAutoAdvanceChoice = type === "single" || type === "select" || isBooleanQuestion(type);
@@ -727,9 +879,15 @@ export default function PackRunner() {
           className="w-full max-w-xl animate-in fade-in slide-in-from-bottom-3 duration-300"
         >
           <div className="space-y-6">
+            {currentQuestion.section ? (
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">{currentQuestion.section}</p>
+            ) : null}
             <h2 className="text-xl md:text-2xl font-semibold leading-snug">
               {currentQuestion.prompt}
             </h2>
+            {currentQuestion.helpText ? (
+              <p className="text-sm text-muted-foreground">{currentQuestion.helpText}</p>
+            ) : null}
 
             {/* Yes/No */}
             {isBooleanQuestion(type) ? (
@@ -924,7 +1082,7 @@ export default function PackRunner() {
           {isAutoAdvanceChoice && isLastQuestion ? (
             <Button
               onClick={handleSeeResults}
-              disabled={!hasAnswer}
+              disabled={!canContinue}
               className="gap-1.5"
             >
               See Results
@@ -935,7 +1093,7 @@ export default function PackRunner() {
           ) : (
             <Button
               onClick={handleNext}
-              disabled={!hasAnswer}
+              disabled={!canContinue}
               className="gap-1.5"
             >
               {isLastQuestion ? "See Results" : "Next"}

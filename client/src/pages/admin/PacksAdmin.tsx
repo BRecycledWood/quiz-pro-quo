@@ -78,7 +78,7 @@ type PackVersion = {
   definition: unknown;
 };
 
-type SimpleQuestionType = "yesno" | "select" | "number";
+type SimpleQuestionType = Question["type"];
 
 type SimpleOption = {
   id: string;
@@ -91,6 +91,9 @@ type SimpleQuestion = {
   prompt: string;
   type: SimpleQuestionType;
   options: SimpleOption[];
+  required: boolean;
+  section: string;
+  helpText: string;
 };
 
 type SimpleOutcome = {
@@ -98,6 +101,8 @@ type SimpleOutcome = {
   title: string;
   description: string;
   status: "pass" | "caution" | "fail";
+  ctaLabel: string;
+  ctaUrl: string;
 };
 
 type SimpleDisqualifier = {
@@ -130,6 +135,7 @@ type PdfModulesPath = "pdfModules" | "pdf.modules";
 
 type SimpleEditorState = {
   name: string;
+  description: string;
   isPaid: boolean;
   stripePriceId: string;
   outcomes: SimpleOutcome[];
@@ -173,15 +179,11 @@ function normalizeOutcomeStatus(status: unknown): "pass" | "caution" | "fail" {
 }
 
 function toSimpleQuestionType(type: Question["type"]): SimpleQuestionType {
-  if (type === "number") return "number";
-  if (type === "yesno" || type === "boolean") return "yesno";
-  return "select";
+  return type;
 }
 
 function toPackQuestionType(type: SimpleQuestionType): Question["type"] {
-  if (type === "number") return "number";
-  if (type === "yesno") return "yesno";
-  return "select";
+  return type;
 }
 
 function encodeAnswersBase64Url(answers: Answers): string {
@@ -208,18 +210,41 @@ function getPdfModules(definition: Record<string, unknown> | null) {
   return null;
 }
 
-function extractSimpleState(definition: PackDefinition | null): SimpleEditorState {
-  const outcomes = (definition?.outcomes ?? []).map((outcome) => ({
+function extractSimpleState(definition: PackDefinition | null, fallbackName = ""): SimpleEditorState {
+  const starterOutcomeIds = definition ? null : { needsWork: createId(), ready: createId() };
+  const starterQuestionId = definition ? null : createId();
+  const starterDefinition: PackDefinition | null = definition ? null : {
+    outcomes: [
+      { id: starterOutcomeIds!.needsWork, title: "Getting started", description: "There are a few foundations to put in place before moving forward.", status: "caution" as const },
+      { id: starterOutcomeIds!.ready, title: "Ready to grow", description: "You have the key foundation in place and can move on to the next step.", status: "pass" as const },
+    ],
+    questions: [
+      { id: starterQuestionId!, prompt: "Are you currently using a documented process for this area?", type: "yesno" as const, required: true },
+    ],
+    scoring: [
+      { id: createId(), points: 1, when: { all: [{ questionId: starterQuestionId!, operator: "equals" as const, value: true }] } },
+    ],
+    thresholds: [
+      { id: createId(), minScore: 0, maxScore: 0, outcomeId: starterOutcomeIds!.needsWork },
+      { id: createId(), minScore: 1, outcomeId: starterOutcomeIds!.ready },
+    ],
+  };
+  const outcomes = (definition?.outcomes ?? starterDefinition?.outcomes ?? []).map((outcome) => ({
     id: outcome.id ?? createId(),
     title: outcome.title ?? "",
     description: outcome.description ?? "",
     status: normalizeOutcomeStatus(outcome.status),
+    ctaLabel: outcome.ctaLabel ?? "",
+    ctaUrl: outcome.ctaUrl ?? "",
   }));
 
-  const questions = (definition?.questions ?? []).map((question) => ({
+  const questions = (definition?.questions ?? starterDefinition?.questions ?? []).map((question) => ({
     id: question.id ?? createId(),
     prompt: question.prompt ?? "",
     type: toSimpleQuestionType(question.type),
+    required: question.required !== false,
+    section: question.section ?? "",
+    helpText: question.helpText ?? "",
     options: (question.options ?? []).map((option) => ({
       id: option.id ?? createId(),
       label: option.label ?? "",
@@ -233,13 +258,13 @@ function extractSimpleState(definition: PackDefinition | null): SimpleEditorStat
     conditions: rule.when?.all ? deepClone(rule.when.all) : [],
   }));
 
-  const scoring = (definition?.scoring ?? []).map((rule) => ({
+  const scoring = (definition?.scoring ?? starterDefinition?.scoring ?? []).map((rule) => ({
     id: rule.id ?? createId(),
     points: typeof rule.points === "number" ? rule.points : ("" as const),
     conditions: rule.when?.all ? deepClone(rule.when.all) : [],
   }));
 
-  const thresholds = (definition?.thresholds ?? []).map((rule) => ({
+  const thresholds = (definition?.thresholds ?? starterDefinition?.thresholds ?? []).map((rule) => ({
     id: rule.id ?? createId(),
     minScore: typeof rule.minScore === "number" ? rule.minScore : ("" as const),
     maxScore: typeof rule.maxScore === "number" ? rule.maxScore : ("" as const),
@@ -250,7 +275,8 @@ function extractSimpleState(definition: PackDefinition | null): SimpleEditorStat
   const pdfInfo = getPdfModules(definition as Record<string, unknown> | null);
 
   return {
-    name: definition?.name ?? "",
+    name: definition?.name ?? fallbackName,
+    description: definition?.description ?? "",
     isPaid: Boolean(pricing?.isPaid),
     stripePriceId: typeof pricing?.stripePriceId === "string" ? pricing.stripePriceId : "",
     outcomes,
@@ -298,6 +324,8 @@ function mergeOutcomes(baseOutcomes: Outcome[] = [], simpleOutcomes: SimpleOutco
       title: outcome.title,
       description: outcome.description,
       status: outcome.status,
+      ctaLabel: outcome.ctaLabel.trim() || undefined,
+      ctaUrl: outcome.ctaUrl.trim() || undefined,
     };
   });
 }
@@ -308,7 +336,8 @@ function mergeQuestions(baseQuestions: Question[] = [], simpleQuestions: SimpleQ
     const base = baseById.get(question.id) ?? ({ id: question.id } as Question);
     const baseOptions = Array.isArray(base.options) ? base.options : [];
     const baseOptionsById = new Map(baseOptions.map((option) => [option.id, option]));
-    const nextOptions = question.type === "select"
+    const usesOptions = ["single", "select", "dropdown", "multi"].includes(question.type);
+    const nextOptions = usesOptions
       ? question.options.map((option) => {
         const baseOption = baseOptionsById.get(option.id) ?? { id: option.id };
         return {
@@ -323,6 +352,9 @@ function mergeQuestions(baseQuestions: Question[] = [], simpleQuestions: SimpleQ
       prompt: question.prompt,
       type: toPackQuestionType(question.type),
       options: nextOptions,
+      required: question.required,
+      section: question.section.trim() || undefined,
+      helpText: question.helpText.trim() || undefined,
     };
   });
 }
@@ -366,11 +398,13 @@ function mergeThresholds(
   return simpleRules.map((rule) => {
     const base = baseById.get(rule.id) ?? ({ id: rule.id } as ThresholdRule);
     const minScore = typeof rule.minScore === "number" ? rule.minScore : Number(rule.minScore);
-    const maxScore = typeof rule.maxScore === "number" ? rule.maxScore : Number(rule.maxScore);
+    const maxScore = rule.maxScore === ""
+      ? undefined
+      : typeof rule.maxScore === "number" ? rule.maxScore : Number(rule.maxScore);
     return {
       ...base,
       minScore: Number.isFinite(minScore) ? minScore : 0,
-      maxScore: Number.isFinite(maxScore) ? maxScore : undefined,
+      maxScore: maxScore !== undefined && Number.isFinite(maxScore) ? maxScore : undefined,
       outcomeId: rule.outcomeId,
     };
   });
@@ -384,6 +418,7 @@ function buildDefinition(
   const next = deepClone(base);
 
   next.name = simple.name;
+  next.description = simple.description.trim() || undefined;
   next.outcomes = mergeOutcomes(base.outcomes ?? [], simple.outcomes);
   next.questions = mergeQuestions(base.questions ?? [], simple.questions);
   next.disqualifiers = mergeDisqualifiers(base.disqualifiers ?? [], simple.disqualifiers);
@@ -473,6 +508,7 @@ export default function PacksAdmin() {
   const [newPackSlug, setNewPackSlug] = useState("");
   const [createPackLoading, setCreatePackLoading] = useState(false);
   const [createPackError, setCreatePackError] = useState<string | null>(null);
+  const [shareMessage, setShareMessage] = useState<string | null>(null);
 
   const [versions, setVersions] = useState<PackVersion[]>([]);
   const [versionsError, setVersionsError] = useState<string | null>(null);
@@ -508,6 +544,11 @@ export default function PacksAdmin() {
     if (stored) {
       setAdminKey(stored);
       setAdminKeyDraft(stored);
+    } else if (import.meta.env.DEV) {
+      const localKey = "local-dev-admin-key";
+      localStorage.setItem(ADMIN_KEY_STORAGE, localKey);
+      setAdminKey(localKey);
+      setAdminKeyDraft(localKey);
     }
     setKeyLoaded(true);
   }, []);
@@ -703,7 +744,7 @@ export default function PacksAdmin() {
     }
   };
 
-  const loadVersions = async (packId: string) => {
+  const loadVersions = async (packId: string, preferredVersionId?: string) => {
     if (!adminKey || !packId) return;
     setLoadingVersions(true);
     setVersionsError(null);
@@ -719,8 +760,12 @@ export default function PacksAdmin() {
       }
       const payload = (await response.json()) as { versions: PackVersion[] };
       setVersions(payload.versions ?? []);
+      const availableVersionIds = new Set((payload.versions ?? []).map((version) => version.id));
+      const preferredId = preferredVersionId && availableVersionIds.has(preferredVersionId)
+        ? preferredVersionId
+        : availableVersionIds.has(selectedVersionId) ? selectedVersionId : null;
       const publishedId = selectedPack?.publishedVersionId ?? null;
-      const nextId = publishedId ?? payload.versions?.[0]?.id ?? "";
+      const nextId = preferredId ?? publishedId ?? payload.versions?.[0]?.id ?? "";
       setSelectedVersionId(nextId);
       const nextVersion = payload.versions?.find((item) => item.id === nextId);
       if (nextVersion) {
@@ -730,7 +775,7 @@ export default function PacksAdmin() {
       } else {
         setDefinitionDraft("");
         setBaseDefinition(null);
-        setSimpleDefinition(extractSimpleState(null));
+        setSimpleDefinition(extractSimpleState(null, selectedPack?.name ?? ""));
       }
       setJsonError(null);
       setDefinitionError(null);
@@ -815,13 +860,16 @@ export default function PacksAdmin() {
         body: JSON.stringify({ definition }),
       });
 
+      const payload = (await response.json().catch(() => ({}))) as {
+        version?: PackVersion;
+        message?: string;
+      };
       if (!response.ok) {
-        const payload = (await response.json()) as { message?: string };
         setDefinitionError(payload?.message ?? "Unable to create version");
         return;
       }
 
-      await loadVersions(selectedPackId);
+      await loadVersions(selectedPackId, payload.version?.id);
     } catch (error) {
       setDefinitionError("Unable to create version");
     } finally {
@@ -939,6 +987,31 @@ export default function PacksAdmin() {
     }));
   };
 
+  const handleAddOutcome = () => {
+    setSimpleDefinition((prev) => ({
+      ...prev,
+      outcomes: [
+        ...prev.outcomes,
+        {
+          id: createId(),
+          title: `Outcome ${prev.outcomes.length + 1}`,
+          description: "",
+          status: "caution",
+          ctaLabel: "",
+          ctaUrl: "",
+        },
+      ],
+    }));
+  };
+
+  const handleRemoveOutcome = (outcomeId: string) => {
+    setSimpleDefinition((prev) => ({
+      ...prev,
+      outcomes: prev.outcomes.filter((outcome) => outcome.id !== outcomeId),
+      thresholds: prev.thresholds.map((rule) => rule.outcomeId === outcomeId ? { ...rule, outcomeId: "" } : rule),
+    }));
+  };
+
   const handleQuestionChange = (
     questionId: string,
     patch: Partial<SimpleQuestion>,
@@ -948,6 +1021,43 @@ export default function PacksAdmin() {
       questions: prev.questions.map((question) =>
         question.id === questionId ? { ...question, ...patch } : question,
       ),
+    }));
+  };
+
+  const handleAddQuestion = () => {
+    const id = createId();
+    setSimpleDefinition((prev) => ({
+      ...prev,
+      questions: [
+        ...prev.questions,
+        {
+          id,
+          prompt: "New question",
+          type: "single",
+          required: true,
+          section: "",
+          helpText: "",
+          options: [
+            { id: createId(), label: "Option 1", value: "option-1" },
+            { id: createId(), label: "Option 2", value: "option-2" },
+          ],
+        },
+      ],
+    }));
+  };
+
+  const handleRemoveQuestion = (questionId: string) => {
+    setSimpleDefinition((prev) => ({
+      ...prev,
+      questions: prev.questions.filter((question) => question.id !== questionId),
+      scoring: prev.scoring.map((rule) => ({
+        ...rule,
+        conditions: rule.conditions.filter((condition) => condition.questionId !== questionId),
+      })).filter((rule) => rule.conditions.length > 0),
+      disqualifiers: prev.disqualifiers.map((rule) => ({
+        ...rule,
+        conditions: rule.conditions.filter((condition) => condition.questionId !== questionId),
+      })).filter((rule) => rule.conditions.length > 0),
     }));
   };
 
@@ -1128,6 +1238,17 @@ export default function PacksAdmin() {
     }
   };
 
+  const handleCopyShareLink = async () => {
+    if (!selectedWorkspace || !selectedPack?.publishedVersionId) return;
+    const shareUrl = new URL(`/w/${selectedWorkspace.slug}/${selectedPack.slug}`, window.location.origin).toString();
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareMessage("Public link copied.");
+    } catch {
+      setShareMessage(shareUrl);
+    }
+  };
+
   // Gate screen — shown to anyone without a saved admin key
   if (!keyLoaded) return null;
 
@@ -1196,17 +1317,21 @@ export default function PacksAdmin() {
             <h1 className="text-xl font-bold">Pack Admin</h1>
             <p className="text-sm text-muted-foreground">Manage workspaces, packs, and quiz versions.</p>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              localStorage.removeItem(ADMIN_KEY_STORAGE);
-              setAdminKey("");
-              setAdminKeyDraft("");
-            }}
-          >
-            Sign out
-          </Button>
+          <div className="flex items-center gap-2">
+            <Link href="/admin/analytics"><Button variant="outline" size="sm">Analytics</Button></Link>
+            <Link href="/"><Button variant="ghost" size="sm">View site</Button></Link>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                localStorage.removeItem(ADMIN_KEY_STORAGE);
+                setAdminKey("");
+                setAdminKeyDraft("");
+              }}
+            >
+              Sign out
+            </Button>
+          </div>
         </div>
 
         <div className="grid gap-6 md:grid-cols-[240px,1fr]">
@@ -1369,9 +1494,16 @@ export default function PacksAdmin() {
                         </div>
                       </button>
                       {selectedWorkspace ? (
-                        <div className="mt-3">
-                          <Link href={`/w/${selectedWorkspace.slug}/${pack.slug}`}>
-                            <Button size="sm">Open Assessment</Button>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {pack.publishedVersionId ? (
+                            <Link href={`/w/${selectedWorkspace.slug}/${pack.slug}`}>
+                              <Button size="sm">Open live assessment</Button>
+                            </Link>
+                          ) : (
+                            <span className="self-center text-xs text-muted-foreground">Publish a version to activate its share page.</span>
+                          )}
+                          <Link href={`/admin/quiz/${pack.id}/dashboard`}>
+                            <Button size="sm" variant="outline">Leads & analytics</Button>
                           </Link>
                         </div>
                       ) : null}
@@ -1471,6 +1603,19 @@ export default function PacksAdmin() {
                           </div>
                         </div>
                       </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="definition-description">Description</Label>
+                        <Textarea
+                          id="definition-description"
+                          rows={3}
+                          value={simpleDefinition.description}
+                          onChange={(event) => setSimpleDefinition((prev) => ({
+                            ...prev,
+                            description: event.target.value,
+                          }))}
+                          placeholder="A short introduction shown before the quiz starts"
+                        />
+                      </div>
                       {simpleDefinition.isPaid ? (
                         <div className="space-y-2">
                           <Label htmlFor="stripe-price">Stripe price id</Label>
@@ -1492,7 +1637,13 @@ export default function PacksAdmin() {
                     <Separator />
 
                     <div className="space-y-3">
-                      <div className="text-sm font-medium">Outcomes</div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-medium">Outcome pages</div>
+                          <p className="text-xs text-muted-foreground">Add result tiers and a next-step call to action for each outcome.</p>
+                        </div>
+                        <Button type="button" variant="outline" size="sm" onClick={handleAddOutcome}>Add outcome</Button>
+                      </div>
                       {simpleDefinition.outcomes.map((outcome, index) => (
                         <div key={outcome.id} className="rounded-md border p-3 space-y-3">
                           <div className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -1540,6 +1691,30 @@ export default function PacksAdmin() {
                               }
                             />
                           </div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="space-y-2">
+                              <Label htmlFor={`outcome-cta-label-${outcome.id}`}>CTA label</Label>
+                              <Input
+                                id={`outcome-cta-label-${outcome.id}`}
+                                value={outcome.ctaLabel}
+                                onChange={(event) => handleOutcomeChange(outcome.id, { ctaLabel: event.target.value })}
+                                placeholder="Book a consultation"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor={`outcome-cta-url-${outcome.id}`}>CTA URL</Label>
+                              <Input
+                                id={`outcome-cta-url-${outcome.id}`}
+                                type="url"
+                                value={outcome.ctaUrl}
+                                onChange={(event) => handleOutcomeChange(outcome.id, { ctaUrl: event.target.value })}
+                                placeholder="https://example.com/next-step"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex justify-end">
+                            <Button type="button" variant="outline" size="sm" onClick={() => handleRemoveOutcome(outcome.id)}>Remove outcome</Button>
+                          </div>
                         </div>
                       ))}
                       {simpleDefinition.outcomes.length === 0 ? (
@@ -1552,100 +1727,113 @@ export default function PacksAdmin() {
                     <Separator />
 
                     <div className="space-y-3">
-                      <div className="text-sm font-medium">Questions</div>
-                      {simpleDefinition.questions.map((question, index) => (
-                        <div key={question.id} className="rounded-md border p-3 space-y-3">
-                          <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                            Question {index + 1}
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor={`question-prompt-${question.id}`}>Prompt</Label>
-                            <Input
-                              id={`question-prompt-${question.id}`}
-                              value={question.prompt}
-                              onChange={(event) =>
-                                handleQuestionChange(question.id, {
-                                  prompt: event.target.value,
-                                })
-                              }
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor={`question-type-${question.id}`}>Type</Label>
-                            <select
-                              id={`question-type-${question.id}`}
-                              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                              value={question.type}
-                              onChange={(event) =>
-                                handleQuestionChange(question.id, {
-                                  type: event.target.value as SimpleQuestionType,
-                                })
-                              }
-                            >
-                              <option value="yesno">Yes / No</option>
-                              <option value="select">Select</option>
-                              <option value="number">Number</option>
-                            </select>
-                          </div>
-                          {question.type === "select" ? (
-                            <div className="space-y-2">
-                              <Label>Options</Label>
-                              <div className="space-y-2">
-                                {question.options.map((option) => (
-                                  <div
-                                    key={option.id}
-                                    className="grid gap-2 md:grid-cols-[1fr,1fr,auto]"
-                                  >
-                                    <Input
-                                      value={option.label}
-                                      onChange={(event) =>
-                                        handleOptionChange(question.id, option.id, {
-                                          label: event.target.value,
-                                        })
-                                      }
-                                      placeholder="Label"
-                                    />
-                                    <Input
-                                      value={option.value ?? ""}
-                                      onChange={(event) =>
-                                        handleOptionChange(question.id, option.id, {
-                                          value: event.target.value,
-                                        })
-                                      }
-                                      placeholder="Value (optional)"
-                                    />
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => handleRemoveOption(question.id, option.id)}
-                                    >
-                                      Remove
-                                    </Button>
-                                  </div>
-                                ))}
-                                {question.options.length === 0 ? (
-                                  <p className="text-xs text-muted-foreground">
-                                    No options yet.
-                                  </p>
-                                ) : null}
-                              </div>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleAddOption(question.id)}
-                              >
-                                Add option
-                              </Button>
-                            </div>
-                          ) : null}
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-medium">Questions</div>
+                          <p className="text-xs text-muted-foreground">Build a mobile-ready assessment with choice, scale, number, and text questions.</p>
                         </div>
-                      ))}
+                        <Button type="button" variant="outline" size="sm" onClick={handleAddQuestion}>Add question</Button>
+                      </div>
+                      {simpleDefinition.questions.map((question, index) => {
+                        const usesOptions = ["single", "select", "dropdown", "multi"].includes(question.type);
+                        return (
+                          <div key={question.id} className="rounded-xl border bg-card p-4 space-y-4">
+                            <div className="flex items-center justify-between">
+                              <div className="text-xs uppercase tracking-wide text-muted-foreground">Question {index + 1}</div>
+                              <Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => handleRemoveQuestion(question.id)}>Remove</Button>
+                            </div>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="space-y-2 md:col-span-2">
+                                <Label htmlFor={`question-prompt-${question.id}`}>Prompt</Label>
+                                <Input
+                                  id={`question-prompt-${question.id}`}
+                                  value={question.prompt}
+                                  onChange={(event) => handleQuestionChange(question.id, { prompt: event.target.value })}
+                                  placeholder="What would you like to ask?"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor={`question-type-${question.id}`}>Answer type</Label>
+                                <select
+                                  id={`question-type-${question.id}`}
+                                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                                  value={question.type}
+                                  onChange={(event) => handleQuestionChange(question.id, { type: event.target.value as SimpleQuestionType })}
+                                >
+                                  <option value="single">Multiple choice (one answer)</option>
+                                  <option value="multi">Multiple choice (many answers)</option>
+                                  <option value="dropdown">Dropdown</option>
+                                  <option value="yesno">Yes / No</option>
+                                  <option value="true_false">True / False</option>
+                                  <option value="number">Number</option>
+                                  <option value="percent">Percentage</option>
+                                  <option value="scale_1_5">Scale 1–5</option>
+                                  <option value="scale_1_10">Scale 1–10</option>
+                                  <option value="short_text">Short text</option>
+                                  <option value="long_text">Long text</option>
+                                  <option value="date">Date</option>
+                                </select>
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Required</Label>
+                                <div className="flex h-9 items-center gap-3">
+                                  <Switch checked={question.required} onCheckedChange={(required) => handleQuestionChange(question.id, { required })} />
+                                  <span className="text-sm text-muted-foreground">{question.required ? "Answer required" : "Optional"}</span>
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor={`question-section-${question.id}`}>Section <span className="text-muted-foreground">(optional)</span></Label>
+                                <Input
+                                  id={`question-section-${question.id}`}
+                                  value={question.section}
+                                  onChange={(event) => handleQuestionChange(question.id, { section: event.target.value })}
+                                  placeholder="e.g. Your business"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor={`question-help-${question.id}`}>Help text <span className="text-muted-foreground">(optional)</span></Label>
+                                <Input
+                                  id={`question-help-${question.id}`}
+                                  value={question.helpText}
+                                  onChange={(event) => handleQuestionChange(question.id, { helpText: event.target.value })}
+                                  placeholder="Add a hint for respondents"
+                                />
+                              </div>
+                            </div>
+                            {usesOptions ? (
+                              <div className="space-y-2 rounded-lg bg-muted/30 p-3">
+                                <div className="flex items-center justify-between">
+                                  <Label>Answer options</Label>
+                                  <Button type="button" variant="outline" size="sm" onClick={() => handleAddOption(question.id)}>Add option</Button>
+                                </div>
+                                <div className="space-y-2">
+                                  {question.options.map((option) => (
+                                    <div key={option.id} className="grid gap-2 md:grid-cols-[1fr,1fr,auto]">
+                                      <Input
+                                        value={option.label}
+                                        onChange={(event) => handleOptionChange(question.id, option.id, { label: event.target.value })}
+                                        placeholder="Answer label"
+                                      />
+                                      <Input
+                                        value={option.value ?? ""}
+                                        onChange={(event) => handleOptionChange(question.id, option.id, { value: event.target.value })}
+                                        placeholder="Score / value (optional)"
+                                      />
+                                      <Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => handleRemoveOption(question.id, option.id)}>Remove</Button>
+                                    </div>
+                                  ))}
+                                  {question.options.length === 0 ? <p className="text-xs text-muted-foreground">Add at least one option before publishing.</p> : null}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
                       {simpleDefinition.questions.length === 0 ? (
-                        <p className="text-xs text-muted-foreground">
-                          No questions available.
-                        </p>
+                        <div className="rounded-lg border border-dashed p-6 text-center">
+                          <p className="text-sm text-muted-foreground mb-3">No questions yet. Add the first question to build your quiz.</p>
+                          <Button type="button" variant="outline" onClick={handleAddQuestion}>Add your first question</Button>
+                        </div>
                       ) : null}
                     </div>
 
@@ -1904,9 +2092,13 @@ export default function PacksAdmin() {
                           testVisibleQuestions.map((question) => {
                             const value = testAnswers[question.id];
                             const type = question.type;
-                            const isYesNo = type === "boolean" || type === "yesno";
-                            const isSelect = type === "single" || type === "select";
-                            const isNumber = type === "number";
+                            const isYesNo = ["boolean", "yesno", "yes_no", "true_false"].includes(type);
+                            const isSelect = ["single", "select", "dropdown"].includes(type);
+                            const isMulti = type === "multi";
+                            const isNumber = ["number", "percent", "scale_1_5", "scale_1_10"].includes(type);
+                            const isText = ["text", "short_text", "long_text", "date"].includes(type);
+                            const trueLabel = type === "true_false" ? "True" : "Yes";
+                            const falseLabel = type === "true_false" ? "False" : "No";
 
                             return (
                               <div key={question.id} className="rounded-md border p-4 space-y-3">
@@ -1924,11 +2116,11 @@ export default function PacksAdmin() {
                                   >
                                     <div className="flex items-center space-x-2">
                                       <RadioGroupItem value="true" id={`${question.id}-yes`} />
-                                      <Label htmlFor={`${question.id}-yes`}>Yes</Label>
+                                      <Label htmlFor={`${question.id}-yes`}>{trueLabel}</Label>
                                     </div>
                                     <div className="flex items-center space-x-2">
                                       <RadioGroupItem value="false" id={`${question.id}-no`} />
-                                      <Label htmlFor={`${question.id}-no`}>No</Label>
+                                      <Label htmlFor={`${question.id}-no`}>{falseLabel}</Label>
                                     </div>
                                   </RadioGroup>
                                 ) : null}
@@ -1954,6 +2146,31 @@ export default function PacksAdmin() {
                                   </Select>
                                 ) : null}
 
+                                {isMulti ? (
+                                  <div className="space-y-2">
+                                    {(question.options ?? []).map((option) => {
+                                      const optionValue = String(option.value ?? option.id);
+                                      const selectedValues = Array.isArray(value) ? value.map(String) : [];
+                                      const checked = selectedValues.includes(optionValue);
+                                      return (
+                                        <label key={option.id} className="flex items-center gap-2 text-sm">
+                                          <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            onChange={(event) => {
+                                              const next = event.target.checked
+                                                ? [...selectedValues, optionValue]
+                                                : selectedValues.filter((item) => item !== optionValue);
+                                              handleTestAnswerChange(question.id, next);
+                                            }}
+                                          />
+                                          {option.label}
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                ) : null}
+
                                 {isNumber ? (
                                   <Input
                                     type="number"
@@ -1969,10 +2186,25 @@ export default function PacksAdmin() {
                                   />
                                 ) : null}
 
-                                {!isYesNo && !isSelect && !isNumber ? (
-                                  <p className="text-xs text-muted-foreground">
-                                    Unsupported question type in tester.
-                                  </p>
+                                {isText ? (
+                                  type === "long_text" ? (
+                                    <Textarea
+                                      value={typeof value === "string" ? value : ""}
+                                      onChange={(event) => handleTestAnswerChange(question.id, event.target.value)}
+                                      placeholder="Type a sample response"
+                                    />
+                                  ) : (
+                                    <Input
+                                      type={type === "date" ? "date" : "text"}
+                                      value={typeof value === "string" ? value : ""}
+                                      onChange={(event) => handleTestAnswerChange(question.id, event.target.value)}
+                                      placeholder="Type a sample response"
+                                    />
+                                  )
+                                ) : null}
+
+                                {!isYesNo && !isSelect && !isMulti && !isNumber && !isText ? (
+                                  <p className="text-xs text-muted-foreground">Unsupported question type in tester.</p>
                                 ) : null}
                               </div>
                             );
@@ -2000,10 +2232,10 @@ export default function PacksAdmin() {
                           >
                             Copy answers as JSON
                           </Button>
-                          {runnerTestUrl && testVisibleQuestions.length > 0 ? (
+                          {runnerTestUrl && testVisibleQuestions.length > 0 && selectedPack?.publishedVersionId === selectedVersionId ? (
                             <Link href={runnerTestUrl}>
                               <Button type="button" variant="outline">
-                                Open in Runner
+                                Preview published version
                               </Button>
                             </Link>
                           ) : null}

@@ -77,13 +77,15 @@ app.use((req, res, next) => {
 (async () => {
   await registerRoutes(httpServer, app);
 
+  const { seedDemoCatalog, seedDemoData } = await import("./seed");
+  const { storage } = await import("./storage");
+  await seedDemoCatalog(storage);
+
   if (
     process.env.NODE_ENV === "development" ||
     process.env.SEED_DEMO_DATA === "true"
   ) {
-    const { seedDemoData } = await import("./seed");
-    const { storage } = await import("./storage");
-    seedDemoData(storage).catch(console.error);
+    await seedDemoData(storage);
   }
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
@@ -113,8 +115,8 @@ app.use((req, res, next) => {
   const port = Number(process.env.PORT) || 3000;
   const hasHostEnv = typeof process.env.HOST === "string" && process.env.HOST.length > 0;
   log(`startup port=${port} hostEnvPresent=${hasHostEnv}`);
-  // Do not bind host/reusePort on macOS Node 22; causes ENOTSUP.
-  httpServer.listen(port, () => {
+  // Bind on all interfaces for containers and Arena's live preview proxy.
+  httpServer.listen(port, "0.0.0.0", () => {
     log(`QPP server running on http://localhost:${port}`);
   });
 })();
