@@ -1,6 +1,6 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile } from "fs/promises";
+import { cp, rm, readFile } from "fs/promises";
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
@@ -72,6 +72,13 @@ async function buildAll() {
     external: ["pg"],
     logLevel: "info",
   });
+
+  // Vercel's Express adapter serves static assets from the project-level public
+  // directory; keep the normal Node/Render output in dist/public unchanged.
+  if (process.env.VERCEL) {
+    await rm("public", { recursive: true, force: true });
+    await cp("dist/public", "public", { recursive: true });
+  }
 }
 
 buildAll().catch((err) => {

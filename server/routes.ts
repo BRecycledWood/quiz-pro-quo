@@ -6,6 +6,7 @@ import { analyzePackLogic, calculateVariables, evaluatePack, getVisibleQuestionI
 import type { Answers, BrandPlan, ConditionGroup, FormulaExpression, PackBranding, PackDefinition, Question } from "@shared/pack";
 import { getBrandEntitlementIssues, getFeatureEntitlements } from "@shared/entitlements";
 import { BRAND_THEME_PRESETS } from "@shared/branding";
+import { isVercelStudioPreviewAuthEnabled } from "./preview-auth";
 import type { Submission } from "@shared/schema";
 import { renderAssessmentPdf } from "./pdf";
 import PDFDocument from "pdfkit";
@@ -724,7 +725,11 @@ export async function registerRoutes(
   const adminKey = process.env.ADMIN_KEY?.trim() || (
     process.env.NODE_ENV === "development" ? "local-dev-admin-key" : undefined
   );
-  const adminAuth = requireAdmin(adminKey);
+  // Dedicated Vercel Preview deployments are protected at the platform edge by
+  // team SSO and project-scoped above. All other environments retain ADMIN_KEY.
+  const adminAuth = isVercelStudioPreviewAuthEnabled()
+    ? (_req: Request, _res: Response, next: NextFunction) => next()
+    : requireAdmin(adminKey);
   const publicReadLimit = createRateLimiter(300, 60_000);
   const publicStartLimit = createRateLimiter(30, 10 * 60_000);
   const publicSubmitLimit = createRateLimiter(30, 10 * 60_000);

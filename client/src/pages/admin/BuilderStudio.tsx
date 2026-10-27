@@ -31,6 +31,19 @@ import LiveAssessmentPreview from "@/components/LiveAssessmentPreview";
 import LogicStudioPanel from "@/components/LogicStudioPanel";
 
 const ADMIN_KEY_STORAGE = "adminKey";
+const VERCEL_PREVIEW_ADMIN_KEY = "vercel-sso-preview";
+
+function getInitialAdminKey() {
+  if (typeof window === "undefined") return "";
+  if (
+    import.meta.env.VITE_STUDIO_PREVIEW_SSO === "true" &&
+    window.location.hostname.endsWith(".vercel.app")
+  ) {
+    return VERCEL_PREVIEW_ADMIN_KEY;
+  }
+  return window.localStorage.getItem(ADMIN_KEY_STORAGE) ?? "";
+}
+
 const inputClass = "h-9 w-full rounded-md border border-input bg-background px-3 text-sm";
 const questionTypes: Array<{ value: QuestionType; label: string; description: string }> = [
   { value: "single", label: "Single choice", description: "Select one answer" },
@@ -256,7 +269,7 @@ function OutcomeEditor({ definition, onChange }: { definition: PackDefinition; o
 }
 
 export default function BuilderStudio() {
-  const [adminKey, setAdminKey] = useState(() => typeof window !== "undefined" ? window.localStorage.getItem(ADMIN_KEY_STORAGE) ?? "" : "");
+  const [adminKey, setAdminKey] = useState(getInitialAdminKey);
   const [keyDraft, setKeyDraft] = useState("");
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);

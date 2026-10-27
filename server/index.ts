@@ -3,11 +3,17 @@ import { registerRoutes } from "./routes";
 import { storage } from "./storage";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { isVercelStudioPreviewAuthEnabled } from "./preview-auth";
 
 if (process.env.NODE_ENV === "production") {
   const adminKey = process.env.ADMIN_KEY?.trim();
-  if (!adminKey || adminKey.length < 32) {
+  if ((!adminKey || adminKey.length < 32) && !isVercelStudioPreviewAuthEnabled()) {
     throw new Error("ADMIN_KEY must be configured with at least 32 characters in production.");
+  }
+  // Vercel supplies the deployment host at runtime. Use it as the staging origin
+  // when a dedicated PUBLIC_APP_URL has not been configured.
+  if (!process.env.PUBLIC_APP_URL?.trim() && process.env.VERCEL_URL) {
+    process.env.PUBLIC_APP_URL = `https://${process.env.VERCEL_URL}`;
   }
   const publicAppUrl = process.env.PUBLIC_APP_URL;
   let parsedPublicAppUrl: URL | null = null;
@@ -30,6 +36,7 @@ if (process.env.NODE_ENV === "production") {
 }
 
 const app = express();
+export default app;
 app.disable("x-powered-by");
 const trustProxyHops = process.env.TRUST_PROXY_HOPS === undefined
   ? process.env.NODE_ENV === "production" ? 1 : 0
@@ -49,6 +56,13 @@ app.use((_req, res, next) => {
   next();
 });
 const httpServer = createServer(app);
+let appReady: Promise<void> = Promise.resolve();
+app.use((_req, res, next) => {
+  void appReady.then(() => next()).catch((error: unknown) => {
+    console.error("Application initialization failed:", error);
+    if (!res.headersSent) res.status(503).json({ message: "Service initialization failed." });
+  });
+});
 
 declare module "http" {
   interface IncomingMessage {
@@ -110,7 +124,7 @@ app.use((req, res, next) => {
   next();
 });
 
-(async () => {
+appReady = (async () => {
   await registerRoutes(httpServer, app);
 
   const { seedDemoCatalog, seedDemoData } = await import("./seed");
@@ -145,16 +159,20 @@ app.use((req, res, next) => {
     const { setupVite } = await import("./vite");
     await setupVite(httpServer, app);
   }
-
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 3000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = Number(process.env.PORT) || 3000;
-  const hasHostEnv = typeof process.env.HOST === "string" && process.env.HOST.length > 0;
-  log(`startup port=${port} hostEnvPresent=${hasHostEnv}`);
-  // Bind on all interfaces for containers and Arena's live preview proxy.
-  httpServer.listen(port, "0.0.0.0", () => {
-    log(`QPP server running on http://localhost:${port}`);
-  });
 })();
+
+// Vercel invokes the exported Express app directly. Keep the long-lived listener
+// for local/Render deployments, but never open a port inside a Vercel Function.
+if (process.env.VERCEL !== "1") {
+  appReady.then(() => {
+    const port = Number(process.env.PORT) || 3000;
+    const hasHostEnv = typeof process.env.HOST === "string" && process.env.HOST.length > 0;
+    log(`startup port=${port} hostEnvPresent=${hasHostEnv}`);
+    httpServer.listen(port, "0.0.0.0", () => {
+      log(`QPP server running on http://localhost:${port}`);
+    });
+  }).catch((error: unknown) => {
+    console.error("Server startup failed:", error);
+    process.exitCode = 1;
+  });
+}
