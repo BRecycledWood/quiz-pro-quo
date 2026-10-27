@@ -40,11 +40,11 @@ test("Builder Studio authors, previews, brands, saves, and publishes without cre
 
   await page.getByLabel("Admin key").fill(ADMIN_KEY);
   await page.getByRole("button", { name: /Continue to builder/ }).click();
-  const workspaceSelect = page.getByLabel("Workspace");
+  const workspaceSelect = page.getByLabel("Workspace", { exact: true });
   await expect(workspaceSelect.locator("option", { hasText: workspaceName })).toHaveCount(1);
   await workspaceSelect.selectOption({ label: workspaceName });
   await expect(workspaceSelect).toHaveValue(workspace.id);
-  const assessmentSelect = page.getByLabel("Assessment");
+  const assessmentSelect = page.getByLabel("Assessment", { exact: true });
   await expect(assessmentSelect.locator("option")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Create assessment" }).click();
