@@ -62,10 +62,11 @@ test("Builder Studio authors, previews, brands, saves, and publishes without cre
   await page.getByRole("button", { name: /Would you like to continue\?/ }).click();
   await page.getByRole("tab", { name: "Logic" }).click();
   await expect(page.getByText("Advanced logic is available on every plan.")).toBeVisible();
-  await page.getByRole("button", { name: "Add route" }).click();
-  await page.getByLabel("Next step").selectOption("finish");
-  await page.getByLabel("Comparison").selectOption("equals");
-  await page.getByLabel("Match value").selectOption("false");
+  const routingSection = page.locator("details").filter({ hasText: "Route after this answer" });
+  await routingSection.getByRole("button", { name: "Add route" }).click();
+  await routingSection.getByLabel("Next step").selectOption("finish");
+  await routingSection.getByLabel("Comparison").selectOption("equals");
+  await routingSection.getByLabel("Match value").selectOption("false");
 
   await page.getByRole("tab", { name: "Branding" }).click();
   await expect(page.getByLabel("Secondary accent hex code")).toBeDisabled();
