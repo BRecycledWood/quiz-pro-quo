@@ -97,6 +97,8 @@ test("PostgreSQL migration upgrades legacy data and completes a submission exact
     const legacyWorkspace = await store.getWorkspace("workspace-1");
     const legacySubmission = await store.getSubmission("submission-1");
     assert.equal(legacyWorkspace?.name, "Legacy Workspace");
+    assert.equal(legacyWorkspace?.brandPlan, "legacy");
+    assert.deepEqual(legacyWorkspace?.brandSettings, {});
     assert.equal(legacySubmission?.email, "legacy@example.com");
     assert.deepEqual(legacySubmission?.answers, { answer: "preserved" });
     assert.equal(legacySubmission?.amountPaidCents, 0);
@@ -104,11 +106,13 @@ test("PostgreSQL migration upgrades legacy data and completes a submission exact
     const columns = await adminPool.query<{ column_name: string }>(`
       SELECT column_name
       FROM information_schema.columns
-      WHERE table_schema = $1 AND table_name IN ('packs', 'submissions')
+      WHERE table_schema = $1 AND table_name IN ('packs', 'submissions', 'workspaces')
     `, [schema]);
     const columnNames = new Set(columns.rows.map((row) => row.column_name));
     assert.ok(columnNames.has("views"));
     assert.ok(columnNames.has("amount_paid_cents"));
+    assert.ok(columnNames.has("brand_plan"));
+    assert.ok(columnNames.has("brand_settings"));
 
     const completionData = {
       email: "first@example.com",
@@ -138,7 +142,7 @@ test("PostgreSQL migration upgrades legacy data and completes a submission exact
     const migrations = await adminPool.query<{ version: number }>(
       `SELECT version FROM "${schema}".app_schema_migrations ORDER BY version`,
     );
-    assert.deepEqual(migrations.rows.map((row) => row.version), [1]);
+    assert.deepEqual(migrations.rows.map((row) => row.version), [1, 2, 3]);
   } finally {
     await store?.close().catch(() => undefined);
     await secondStore?.close().catch(() => undefined);

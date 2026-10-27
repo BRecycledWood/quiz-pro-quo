@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { Pool, type PoolConfig } from "pg";
-import type { PackDefinition } from "@shared/pack";
+import type { BrandPlan, PackBranding, PackDefinition } from "@shared/pack";
 import type { Pack, PackVersion, Submission, Workspace } from "@shared/schema";
 
 export type PackVersionRecord = Omit<PackVersion, "definition"> & {
@@ -13,6 +13,8 @@ export type WorkspaceCreateInput = {
   logoUrl?: string | null;
   primaryColor?: string | null;
   secondaryColor?: string | null;
+  brandSettings?: PackBranding;
+  brandPlan?: BrandPlan;
 };
 
 export type WorkspaceUpdateInput = {
@@ -21,6 +23,8 @@ export type WorkspaceUpdateInput = {
   logoUrl?: string | null;
   primaryColor?: string | null;
   secondaryColor?: string | null;
+  brandSettings?: PackBranding;
+  brandPlan?: BrandPlan;
 };
 
 export type PackCreateInput = {
@@ -342,6 +346,8 @@ export class MemStorage implements IStorage {
       logoUrl: input.logoUrl !== undefined ? input.logoUrl : workspace.logoUrl,
       primaryColor: input.primaryColor !== undefined ? input.primaryColor : workspace.primaryColor,
       secondaryColor: input.secondaryColor !== undefined ? input.secondaryColor : workspace.secondaryColor,
+      brandSettings: input.brandSettings ?? workspace.brandSettings,
+      brandPlan: input.brandPlan ?? workspace.brandPlan,
       updatedAt: new Date(),
     };
     this.workspaces.set(id, updated);
@@ -535,6 +541,8 @@ export class MemStorage implements IStorage {
       logoUrl: input.logoUrl ?? null,
       primaryColor: input.primaryColor ?? null,
       secondaryColor: input.secondaryColor ?? null,
+      brandSettings: input.brandSettings ?? {},
+      brandPlan: input.brandPlan ?? "free",
       createdAt: now,
       updatedAt: now,
     };
@@ -580,6 +588,7 @@ export class MemStorage implements IStorage {
       logoUrl: "https://placehold.co/120x120",
       primaryColor: "#0f766e",
       secondaryColor: "#0f172a",
+      brandPlan: "legacy",
     });
 
     this.addWorkspace({
@@ -588,6 +597,7 @@ export class MemStorage implements IStorage {
       logoUrl: "https://placehold.co/120x120",
       primaryColor: "#0f4c81",
       secondaryColor: "#f97316",
+      brandPlan: "legacy",
     });
 
     const insurancePack = this.addPack({
@@ -661,6 +671,8 @@ type WorkspaceRow = {
   logoUrl: string | null;
   primaryColor: string | null;
   secondaryColor: string | null;
+  brandSettings: PackBranding;
+  brandPlan: BrandPlan;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -764,6 +776,8 @@ export class PgStorage implements IStorage {
           logo_url text,
           primary_color text,
           secondary_color text,
+          brand_settings jsonb NOT NULL DEFAULT '{}'::jsonb,
+          brand_plan text NOT NULL DEFAULT 'free',
           created_at timestamptz NOT NULL,
           updated_at timestamptz NOT NULL
         );
@@ -821,6 +835,11 @@ export class PgStorage implements IStorage {
       await client.query("CREATE INDEX IF NOT EXISTS submissions_workspace_id_idx ON submissions (workspace_id)");
       await client.query("CREATE INDEX IF NOT EXISTS submissions_pack_id_idx ON submissions (pack_id)");
       await client.query("INSERT INTO app_schema_migrations (version) VALUES (1) ON CONFLICT (version) DO NOTHING");
+      // Existing workspaces are grandfathered so the additive branding tier does not remove prior capabilities.
+      await client.query("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS brand_plan text NOT NULL DEFAULT 'legacy'");
+      await client.query("INSERT INTO app_schema_migrations (version) VALUES (2) ON CONFLICT (version) DO NOTHING");
+      await client.query("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS brand_settings jsonb NOT NULL DEFAULT '{}'::jsonb");
+      await client.query("INSERT INTO app_schema_migrations (version) VALUES (3) ON CONFLICT (version) DO NOTHING");
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);
@@ -851,6 +870,8 @@ export class PgStorage implements IStorage {
         logo_url AS "logoUrl",
         primary_color AS "primaryColor",
         secondary_color AS "secondaryColor",
+        brand_settings AS "brandSettings",
+        brand_plan AS "brandPlan",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM workspaces
@@ -868,6 +889,8 @@ export class PgStorage implements IStorage {
         logo_url AS "logoUrl",
         primary_color AS "primaryColor",
         secondary_color AS "secondaryColor",
+        brand_settings AS "brandSettings",
+        brand_plan AS "brandPlan",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM workspaces
@@ -885,6 +908,8 @@ export class PgStorage implements IStorage {
         logo_url AS "logoUrl",
         primary_color AS "primaryColor",
         secondary_color AS "secondaryColor",
+        brand_settings AS "brandSettings",
+        brand_plan AS "brandPlan",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM workspaces
@@ -901,14 +926,16 @@ export class PgStorage implements IStorage {
       logoUrl: input.logoUrl ?? null,
       primaryColor: input.primaryColor ?? null,
       secondaryColor: input.secondaryColor ?? null,
+      brandSettings: input.brandSettings ?? {},
+      brandPlan: input.brandPlan ?? "free",
       createdAt: new Date(),
       updatedAt: new Date(),
     };
     try {
       const row = await this.queryOne<WorkspaceRow>(`
         INSERT INTO workspaces (
-          id, name, slug, logo_url, primary_color, secondary_color, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          id, name, slug, logo_url, primary_color, secondary_color, brand_settings, brand_plan, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING
           id,
           name,
@@ -916,6 +943,8 @@ export class PgStorage implements IStorage {
           logo_url AS "logoUrl",
           primary_color AS "primaryColor",
           secondary_color AS "secondaryColor",
+          brand_settings AS "brandSettings",
+          brand_plan AS "brandPlan",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
       `, [
@@ -925,6 +954,8 @@ export class PgStorage implements IStorage {
         workspace.logoUrl,
         workspace.primaryColor,
         workspace.secondaryColor,
+        workspace.brandSettings,
+        workspace.brandPlan,
         workspace.createdAt,
         workspace.updatedAt,
       ]);
@@ -947,7 +978,9 @@ export class PgStorage implements IStorage {
           logo_url = $4,
           primary_color = $5,
           secondary_color = $6,
-          updated_at = $7
+          brand_settings = $7,
+          brand_plan = $8,
+          updated_at = $9
         WHERE id = $1
         RETURNING
           id,
@@ -956,6 +989,8 @@ export class PgStorage implements IStorage {
           logo_url AS "logoUrl",
           primary_color AS "primaryColor",
           secondary_color AS "secondaryColor",
+          brand_settings AS "brandSettings",
+          brand_plan AS "brandPlan",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
       `, [
@@ -965,6 +1000,8 @@ export class PgStorage implements IStorage {
         input.logoUrl !== undefined ? input.logoUrl : existing.logoUrl,
         input.primaryColor !== undefined ? input.primaryColor : existing.primaryColor,
         input.secondaryColor !== undefined ? input.secondaryColor : existing.secondaryColor,
+        input.brandSettings ?? existing.brandSettings,
+        input.brandPlan ?? existing.brandPlan,
         new Date(),
       ]);
       return row ? mapWorkspace(row) : undefined;

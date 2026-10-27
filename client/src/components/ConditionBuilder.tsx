@@ -71,7 +71,7 @@ export default function ConditionBuilder({
   return (
     <div className="space-y-3">
       {conditions.map((condition, index) => {
-        const question = questionMap.get(condition.questionId);
+        const question = condition.questionId ? questionMap.get(condition.questionId) : undefined;
         const kind = getQuestionKind(question?.type);
         const operator = condition.operator ?? "equals";
         const value = normalizeValue(condition.value);

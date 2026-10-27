@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useRoute } from "wouter";
-import type { Answers, AnswerValue, PackDefinition, Outcome } from "@shared/pack";
-import { evaluatePack, getVisibleQuestionIds } from "@shared/engine/interpreter";
+import type { CSSProperties } from "react";
+import type { Answers, AnswerValue, PackBranding, PackDefinition, Outcome } from "@shared/pack";
+import { evaluatePack, evaluatePackDetailed, getNextQuestionId, getVisibleQuestionIds } from "@shared/engine/interpreter";
+import { getBrandCssVariables, resolvePackBranding } from "@shared/branding";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -30,6 +32,7 @@ type PublicPackResponse = {
     logoUrl: string | null;
     primaryColor: string | null;
     secondaryColor: string | null;
+    brandSettings: PackBranding;
   };
   pack: {
     id: string;
@@ -217,13 +220,32 @@ function EmailGate({
 
 // ─── Progress Bar ─────────────────────────────────────────────────────────────
 
-function ProgressBar({ value }: { value: number }) {
+function ProgressBar({
+  value,
+  style = "bar",
+  current = 1,
+  total = 1,
+}: {
+  value: number;
+  style?: PackBranding["progressStyle"];
+  current?: number;
+  total?: number;
+}) {
+  if (style === "steps") {
+    return (
+      <div className="flex gap-1.5" role="progressbar" aria-valuenow={current} aria-valuemin={1} aria-valuemax={total} aria-label={`Question ${current} of ${total}`}>
+        {Array.from({ length: Math.max(1, total) }, (_, index) => (
+          <span key={index} className={`h-1.5 flex-1 rounded-full ${index < current ? "bg-primary" : "bg-muted"}`} />
+        ))}
+      </div>
+    );
+  }
+  if (style === "minimal") {
+    return <p className="text-right text-xs tabular-nums text-muted-foreground" aria-label={`Question ${current} of ${total}`}>{Math.round(value)}% complete</p>;
+  }
   return (
-    <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
-      <div
-        className="h-full bg-primary rounded-full transition-all duration-500 ease-out"
-        style={{ width: `${Math.max(4, value)}%` }}
-      />
+    <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden" role="progressbar" aria-valuenow={Math.round(value)} aria-valuemin={0} aria-valuemax={100} aria-label={`${Math.round(value)}% complete`}>
+      <div className="h-full bg-primary rounded-full transition-all duration-500 ease-out" style={{ width: `${Math.max(4, value)}%` }} />
     </div>
   );
 }
@@ -322,6 +344,16 @@ export default function PackRunner() {
   }, [workspaceSlug, packSlug, isPreviewMode]);
 
   const definition = data?.definition ?? null;
+  const resolvedBranding = useMemo(
+    () => resolvePackBranding(data?.workspace, definition?.branding),
+    [data?.workspace, definition?.branding],
+  );
+  const brandingStyle = getBrandCssVariables(resolvedBranding) as CSSProperties;
+  const brandLogo = resolvedBranding.logoDataUrl ?? resolvedBranding.logoUrl;
+  const liveEvaluation = useMemo(
+    () => definition ? evaluatePackDetailed(definition, answers) : null,
+    [definition, answers],
+  );
   const pricing = definition?.pricing;
   const isPaidPack = !isPreviewMode && Boolean(pricing?.isPaid);
   const stripePriceId = typeof pricing?.stripePriceId === "string" ? pricing.stripePriceId : "";
@@ -353,7 +385,10 @@ export default function PackRunner() {
   // Clamp index when branching changes the visible list
   const safeIndex = Math.min(currentQuestionIndex, Math.max(0, visibleQuestions.length - 1));
   const currentQuestion = visibleQuestions[safeIndex] ?? null;
-  const isLastQuestion = safeIndex >= visibleQuestions.length - 1;
+  const nextQuestionId = definition && currentQuestion
+    ? getNextQuestionId(definition, currentQuestion.id, answers)
+    : null;
+  const isLastQuestion = !nextQuestionId;
   const progress = visibleQuestions.length > 0
     ? ((safeIndex + 1) / visibleQuestions.length) * 100
     : 0;
@@ -392,39 +427,9 @@ export default function PackRunner() {
     setSubmitError(null);
   };
 
-  const advanceToNext = () => {
-    setCardKey((key) => key + 1);
-    setCurrentQuestionIndex((index) => index + 1);
-  };
-
-  const handleSelectAnswer = (questionId: string, value: AnswerValue) => {
-    handleAnswerChange(questionId, value);
-    if (!isLastQuestion && currentQuestion && (
-      currentQuestion.type === "single" ||
-      currentQuestion.type === "select" ||
-      isBooleanQuestion(currentQuestion.type)
-    )) {
-      if (autoAdvanceTimer.current) clearTimeout(autoAdvanceTimer.current);
-      autoAdvanceTimer.current = setTimeout(advanceToNext, 320);
-    }
-  };
-
-  const handleNext = () => {
-    if (!currentQuestion || (currentQuestion.required !== false && !isAnswered(answers[currentQuestion.id]))) return;
-    if (isLastQuestion) handleSeeResults();
-    else advanceToNext();
-  };
-
-  const handleBack = () => {
-    if (safeIndex > 0) {
-      setCardKey((key) => key + 1);
-      setCurrentQuestionIndex((index) => Math.max(0, index - 1));
-    }
-  };
-
-  const handleSeeResults = () => {
+  const handleSeeResults = (answerSnapshot: Answers = answers) => {
     if (!definition) return;
-    const evaluation = evaluatePack(definition, answers);
+    const evaluation = evaluatePack(definition, answerSnapshot);
     if (isPreviewMode) {
       setPendingResult(null);
       setResult(evaluation);
@@ -434,6 +439,52 @@ export default function PackRunner() {
     setPendingResult(evaluation);
     setSubmitError(null);
     setShowEmailGate(true);
+  };
+
+  const advanceToNext = (answerSnapshot: Answers = answers) => {
+    if (!definition || !currentQuestion) return;
+    const targetQuestionId = getNextQuestionId(definition, currentQuestion.id, answerSnapshot);
+    if (!targetQuestionId) {
+      handleSeeResults(answerSnapshot);
+      return;
+    }
+    const nextVisibleIds = getVisibleQuestionIds(definition, answerSnapshot);
+    const nextIndex = nextVisibleIds.indexOf(targetQuestionId);
+    if (nextIndex < 0) {
+      handleSeeResults(answerSnapshot);
+      return;
+    }
+    setCardKey((key) => key + 1);
+    setCurrentQuestionIndex(nextIndex);
+  };
+
+  const handleSelectAnswer = (questionId: string, value: AnswerValue) => {
+    const nextAnswers = { ...answers, [questionId]: value };
+    handleAnswerChange(questionId, value);
+    if (currentQuestion && definition && getNextQuestionId(definition, currentQuestion.id, nextAnswers) && (
+      currentQuestion.type === "single" ||
+      currentQuestion.type === "select" ||
+      isBooleanQuestion(currentQuestion.type)
+    )) {
+      if (autoAdvanceTimer.current) clearTimeout(autoAdvanceTimer.current);
+      autoAdvanceTimer.current = setTimeout(() => advanceToNext(nextAnswers), 320);
+    }
+  };
+
+  const currentRequired = currentQuestion
+    ? liveEvaluation?.requiredQuestionIds.includes(currentQuestion.id) ?? currentQuestion.required !== false
+    : false;
+
+  const handleNext = () => {
+    if (!currentQuestion || (currentRequired && !isAnswered(answers[currentQuestion.id]))) return;
+    advanceToNext();
+  };
+
+  const handleBack = () => {
+    if (safeIndex > 0) {
+      setCardKey((key) => key + 1);
+      setCurrentQuestionIndex((index) => Math.max(0, index - 1));
+    }
   };
 
   const handleEmailGateSubmit = async (email: string, firstName: string) => {
@@ -699,12 +750,14 @@ export default function PackRunner() {
 
   if (showEmailGate) {
     return (
-      <EmailGate
-        onSubmit={handleEmailGateSubmit}
-        isSubmitting={submitting}
-        submitError={submitError}
-        isPaidPack={isPaidPack}
-      />
+      <div className="assessment-brand" style={brandingStyle} data-button-style={resolvedBranding.buttonStyle}>
+        <EmailGate
+          onSubmit={handleEmailGateSubmit}
+          isSubmitting={submitting}
+          submitError={submitError}
+          isPaidPack={isPaidPack}
+        />
+      </div>
     );
   }
 
@@ -732,9 +785,12 @@ export default function PackRunner() {
     });
 
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 py-16">
+      <div className="assessment-brand min-h-screen bg-background flex flex-col items-center justify-center px-4 py-16" style={brandingStyle} data-button-style={resolvedBranding.buttonStyle}>
         <div className="w-full max-w-lg space-y-6">
-
+          <div className="flex items-center justify-center gap-3 text-center">
+            {brandLogo ? <img src={brandLogo} alt="" className="h-10 max-w-36 object-contain" /> : null}
+            <span className="text-sm font-semibold text-muted-foreground">{resolvedBranding.brandName ?? data.workspace.name}</span>
+          </div>
           {submittedEmail ? (
             <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 text-center">
               {isPaidPack
@@ -832,8 +888,9 @@ export default function PackRunner() {
     const questionCount = visibleQuestions.length;
     const estimatedMinutes = Math.max(1, Math.ceil(questionCount * 0.35));
     return (
-      <div className="min-h-screen bg-gradient-to-b from-primary/5 via-background to-background flex items-center justify-center px-4 py-12">
+      <div className="assessment-brand min-h-screen bg-gradient-to-b from-primary/5 via-background to-background flex items-center justify-center px-4 py-12" style={brandingStyle} data-button-style={resolvedBranding.buttonStyle}>
         <div className="w-full max-w-2xl">
+          {brandLogo ? <div className="mb-5"><img src={brandLogo} alt={resolvedBranding.brandName ?? "Assessment brand"} className="h-10 max-w-44 object-contain" /></div> : null}
           <Link href="/demo" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-8">
             <ArrowLeft className="h-4 w-4" /> Back to examples
           </Link>
@@ -873,7 +930,7 @@ export default function PackRunner() {
               </div>
             </div>
           </div>
-          <p className="mt-5 text-center text-xs text-muted-foreground">Powered by QuizProQuo · Secure, mobile-friendly assessments</p>
+          {resolvedBranding.showAttribution !== false ? <p className="mt-5 text-center text-xs text-muted-foreground">Powered by Quiz Pro Quo · Secure, mobile-friendly assessments</p> : null}
         </div>
       </div>
     );
@@ -891,8 +948,11 @@ export default function PackRunner() {
 
   const currentAnswer = answers[currentQuestion.id];
   const hasAnswer = isAnswered(currentAnswer);
-  const canContinue = currentQuestion.required === false || hasAnswer;
+  const canContinue = !currentRequired || hasAnswer;
   const type = currentQuestion.type;
+  const currentSectionTitle = currentQuestion.sectionId
+    ? definition.sections?.find((section) => section.id === currentQuestion.sectionId)?.title ?? currentQuestion.section
+    : currentQuestion.section;
   const isChoice = isSingleChoiceQuestion(type) || isBooleanQuestion(type);
   const isAutoAdvanceChoice = type === "single" || type === "select" || isBooleanQuestion(type);
   const isNumberInput = type === "number" || type === "percent";
@@ -913,15 +973,18 @@ export default function PackRunner() {
       ];
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="assessment-brand min-h-screen bg-background flex flex-col" style={brandingStyle} data-button-style={resolvedBranding.buttonStyle} data-progress-style={resolvedBranding.progressStyle}>
 
       {/* Top bar */}
       <div className="w-full px-4 pt-6 pb-4 max-w-xl mx-auto space-y-3">
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span className="font-medium text-foreground">{definition.name ?? data.pack.name}</span>
-          <span>{safeIndex + 1} / {visibleQuestions.length}</span>
+        <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+          <span className="flex min-w-0 items-center gap-2 font-medium text-foreground">
+            {brandLogo ? <img src={brandLogo} alt="" className="h-7 max-w-24 object-contain" /> : null}
+            <span className="truncate">{definition.name ?? data.pack.name}</span>
+          </span>
+          <span className="shrink-0">{safeIndex + 1} / {visibleQuestions.length}</span>
         </div>
-        <ProgressBar value={progress} />
+        <ProgressBar value={progress} style={resolvedBranding.progressStyle} current={safeIndex + 1} total={visibleQuestions.length} />
       </div>
 
       {/* Question card */}
@@ -931,8 +994,8 @@ export default function PackRunner() {
           className="w-full max-w-xl animate-in fade-in slide-in-from-bottom-3 duration-300"
         >
           <div className="space-y-6">
-            {currentQuestion.section ? (
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">{currentQuestion.section}</p>
+            {currentSectionTitle ? (
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">{currentSectionTitle}</p>
             ) : null}
             <h2 className="text-xl md:text-2xl font-semibold leading-snug">
               {currentQuestion.prompt}
@@ -1133,7 +1196,7 @@ export default function PackRunner() {
           {/* For choice questions that auto-advance, show a subtle indicator on last question */}
           {isAutoAdvanceChoice && isLastQuestion ? (
             <Button
-              onClick={handleSeeResults}
+              onClick={() => handleSeeResults()}
               disabled={!canContinue}
               className="gap-1.5"
             >

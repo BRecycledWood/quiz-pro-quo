@@ -2,8 +2,10 @@ import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "http";
 import { storage, type IStorage, type PackVersionRecord } from "./storage";
 import type { sendLeadNotification, sendResultsEmail } from "./email";
-import { evaluatePack, getVisibleQuestionIds } from "@shared/engine/interpreter";
-import type { Answers, ConditionGroup, PackDefinition, Question } from "@shared/pack";
+import { analyzePackLogic, calculateVariables, evaluatePack, getVisibleQuestionIds, isQuestionRequired } from "@shared/engine/interpreter";
+import type { Answers, BrandPlan, ConditionGroup, FormulaExpression, PackBranding, PackDefinition, Question } from "@shared/pack";
+import { getBrandEntitlementIssues, getFeatureEntitlements } from "@shared/entitlements";
+import { BRAND_THEME_PRESETS } from "@shared/branding";
 import type { Submission } from "@shared/schema";
 import { renderAssessmentPdf } from "./pdf";
 import PDFDocument from "pdfkit";
@@ -132,51 +134,169 @@ function createRateLimiter(limit: number, windowMs: number) {
   };
 }
 
-function validateConditionGroup(value: unknown, questionIds: Set<string>): string | null {
-  if (!isRecord(value)) return "Conditions must be an object.";
-  const conditions: unknown[] = [];
-  for (const key of ["all", "any"] as const) {
-    if (value[key] !== undefined && !Array.isArray(value[key])) return `Condition ${key} must be an array.`;
-    if (Array.isArray(value[key])) conditions.push(...value[key]);
-  }
-  if (conditions.length === 0) return "Add at least one condition.";
-  for (const condition of conditions) {
-    if (!isRecord(condition)) return "Each condition must be an object.";
-    if (typeof condition.questionId !== "string" || !questionIds.has(condition.questionId)) {
-      return "A condition refers to a question that does not exist.";
-    }
-    if (typeof condition.operator !== "string" || !CONDITION_OPERATORS.has(condition.operator)) {
-      return "A condition uses an unsupported operator.";
-    }
-    if (!["answered", "not_answered"].includes(condition.operator) && condition.value === undefined) {
-      return "Each value-based condition needs a value.";
-    }
-    const conditionValue = condition.value;
+function validateConditionGroup(
+  value: unknown,
+  questionIds: Set<string>,
+  variableIds: Set<string> = new Set(),
+  depth = 0,
+  state = { leaves: 0 },
+): string | null {
+  if (!isRecord(value)) return "Conditions must be objects.";
+  if (depth > 16) return "Condition nesting cannot exceed 16 levels.";
+
+  if (typeof value.operator === "string") {
+    state.leaves += 1;
+    if (state.leaves > 500) return "A rule cannot contain more than 500 conditions.";
+    const hasQuestion = typeof value.questionId === "string" && value.questionId.length > 0;
+    const hasVariable = typeof value.variableId === "string" && value.variableId.length > 0;
+    if (hasQuestion === hasVariable) return "Each condition must reference exactly one question or calculated variable.";
+    if (hasQuestion && !questionIds.has(value.questionId as string)) return "A condition refers to a question that does not exist.";
+    if (hasVariable && !variableIds.has(value.variableId as string)) return "A condition refers to a calculated variable that does not exist.";
+    if (!CONDITION_OPERATORS.has(value.operator)) return "A condition uses an unsupported operator.";
+    if (value.caseSensitive !== undefined && typeof value.caseSensitive !== "boolean") return "Condition caseSensitive must be a boolean.";
+    const requiresValue = !["answered", "not_answered", "empty", "not_empty"].includes(value.operator);
+    if (requiresValue && value.value === undefined) return "Each value-based condition needs a value.";
+    const conditionValue = value.value;
     const isPrimitive = (item: unknown) =>
       typeof item === "string" || typeof item === "number" && Number.isFinite(item) || typeof item === "boolean";
-    if (
-      conditionValue !== undefined &&
-      !(isPrimitive(conditionValue) || Array.isArray(conditionValue) && conditionValue.every(isPrimitive))
-    ) {
+    if (conditionValue !== undefined && !(isPrimitive(conditionValue) || Array.isArray(conditionValue) && conditionValue.every(isPrimitive))) {
       return "Condition values must be strings, numbers, booleans, or arrays of those values.";
     }
-    if (["gt", "gte", "lt", "lte"].includes(condition.operator) && typeof conditionValue !== "number") {
+    if (["gt", "gte", "lt", "lte"].includes(value.operator) && typeof conditionValue !== "number") {
       return "Numeric comparison conditions need a numeric value.";
     }
+    if (["before", "after", "on_or_before", "on_or_after"].includes(value.operator)) {
+      if (typeof conditionValue !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(conditionValue) || Number.isNaN(Date.parse(`${conditionValue}T00:00:00Z`))) {
+        return "Date comparison conditions need a valid YYYY-MM-DD date.";
+      }
+    }
+    return null;
+  }
+
+  const childNodes: unknown[] = [];
+  for (const key of ["all", "any"] as const) {
+    if (value[key] !== undefined && !Array.isArray(value[key])) return `Condition ${key} must be an array.`;
+    if (Array.isArray(value[key])) childNodes.push(...value[key]);
+  }
+  if (value.not !== undefined) childNodes.push(value.not);
+  if (childNodes.length === 0) return "Add at least one condition.";
+  for (const child of childNodes) {
+    const issue = validateConditionGroup(child, questionIds, variableIds, depth + 1, state);
+    if (issue) return issue;
   }
   return null;
 }
 
 const CONDITION_OPERATORS = new Set([
-  "equals", "not_equals", "includes", "not_includes", "gt", "gte", "lt", "lte", "answered", "not_answered",
+  "equals", "not_equals", "includes", "not_includes", "contains", "not_contains",
+  "starts_with", "ends_with", "gt", "gte", "lt", "lte", "before", "after",
+  "on_or_before", "on_or_after", "answered", "not_answered", "empty", "not_empty",
 ]);
+
+function isSafeLogoDataUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 700_000) return false;
+  const match = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if (!match) return false;
+  const bytes = Buffer.from(match[2], "base64");
+  if (bytes.length === 0 || bytes.length > 512 * 1024) return false;
+  if (match[1] === "png") {
+    return bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  }
+  return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+}
+
+const FORMULA_OPERATORS = new Set([
+  "literal", "answer", "variable", "add", "subtract", "multiply", "divide", "modulo",
+  "min", "max", "average", "abs", "round", "floor", "ceil", "count", "length",
+  "concat", "coalesce", "days_between",
+]);
+
+function validateFormulaExpression(
+  value: unknown,
+  questionIds: Set<string>,
+  variableIds: Set<string>,
+  depth = 0,
+  state = { nodes: 0 },
+): string | null {
+  if (!isRecord(value) || typeof value.op !== "string" || !FORMULA_OPERATORS.has(value.op)) {
+    return "Formula nodes must use a supported safe operation.";
+  }
+  state.nodes += 1;
+  if (depth > 16 || state.nodes > 256) return "Formula exceeds the supported complexity limit (16 levels / 256 nodes).";
+  if (value.op === "literal") {
+    const literal = value.value;
+    if (!(literal === null || typeof literal === "string" && literal.length <= 5_000 || typeof literal === "boolean" || typeof literal === "number" && Number.isFinite(literal))) {
+      return "Formula literals must be finite numbers, booleans, strings up to 5,000 characters, or null.";
+    }
+    return null;
+  }
+  if (value.op === "answer") {
+    return typeof value.questionId === "string" && questionIds.has(value.questionId)
+      ? null
+      : "Formula refers to a missing question.";
+  }
+  if (value.op === "variable") {
+    return typeof value.variableId === "string" && variableIds.has(value.variableId)
+      ? null
+      : "Formula refers to a missing calculated variable.";
+  }
+  if (!Array.isArray(value.args) || value.args.length === 0 || value.args.length > 32) return "Formula operations need between 1 and 32 arguments.";
+  const arity: Record<string, number> = { subtract: 2, divide: 2, modulo: 2, abs: 1, round: 1, floor: 1, ceil: 1, length: 1, days_between: 2 };
+  if (arity[value.op] !== undefined && value.args.length !== arity[value.op]) return `Formula ${value.op} requires exactly ${arity[value.op]} argument(s).`;
+  for (const argument of value.args) {
+    const issue = validateFormulaExpression(argument, questionIds, variableIds, depth + 1, state);
+    if (issue) return issue;
+  }
+  return null;
+}
+
+function validateBrandingShape(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (!isRecord(value)) return "Branding settings must be an object.";
+  const brand = value;
+  if (brand.brandName !== undefined && (typeof brand.brandName !== "string" || brand.brandName.trim().length === 0 || brand.brandName.length > 120)) return "Brand name must be 1–120 characters.";
+  if (brand.logoDataUrl !== undefined && !isSafeLogoDataUrl(brand.logoDataUrl)) return "Uploaded logos must be PNG or JPEG images under 512 KB with a valid file signature.";
+  if (brand.logoUrl !== undefined && !isValidLogoUrl(brand.logoUrl)) return "Brand logo URLs must use HTTPS and point to a safe public host.";
+  for (const key of ["primaryColor", "secondaryColor", "backgroundColor", "textColor"] as const) {
+    if (brand[key] !== undefined && !isValidColor(brand[key])) return `Brand ${key} must be a valid hex color.`;
+  }
+  const enums: Record<string, string[]> = {
+    themePreset: ["studio", "ocean", "grove", "sunrise", "ink"],
+    fontPreset: ["system", "modern", "friendly", "editorial", "rounded", "serif"],
+    buttonStyle: ["rounded", "pill", "square"],
+    progressStyle: ["bar", "steps", "minimal"],
+  };
+  for (const [field, allowed] of Object.entries(enums)) {
+    if (brand[field] !== undefined && (typeof brand[field] !== "string" || !allowed.includes(brand[field] as string))) return `Brand ${field} is not supported.`;
+  }
+  if (brand.customFontFamily !== undefined && (typeof brand.customFontFamily !== "string" || brand.customFontFamily.length > 100 || !/^[\w\s,'"()-]+$/.test(brand.customFontFamily))) return "Custom font family contains unsupported characters.";
+  if (brand.showAttribution !== undefined && typeof brand.showAttribution !== "boolean") return "Brand attribution setting must be a boolean.";
+  const theme = (typeof brand.themePreset === "string" ? BRAND_THEME_PRESETS[brand.themePreset as keyof typeof BRAND_THEME_PRESETS] : undefined) ?? BRAND_THEME_PRESETS.studio;
+  const effectiveBackground = typeof brand.backgroundColor === "string" ? brand.backgroundColor : theme?.backgroundColor;
+  const effectiveText = typeof brand.textColor === "string" ? brand.textColor : theme?.textColor;
+  if ((brand.backgroundColor !== undefined || brand.textColor !== undefined) && effectiveBackground && effectiveText && colorContrastRatio(effectiveBackground, effectiveText) < 4.5) {
+    return "Brand text must meet a 4.5:1 contrast ratio against the page background.";
+  }
+  return null;
+}
+
+function colorContrastRatio(foreground: string, background: string): number {
+  const luminance = (color: string) => {
+    const raw = color.slice(1);
+    const expanded = raw.length === 3 ? raw.split("").map((char) => char + char).join("") : raw;
+    const channels = [0, 2, 4].map((offset) => parseInt(expanded.slice(offset, offset + 2), 16) / 255).map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  };
+  const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+  return (values[0] + 0.05) / (values[1] + 0.05);
+}
 
 function validatePackDefinition(value: unknown): { definition?: PackDefinition; error?: string } {
   if (!isRecord(value) || !Array.isArray(value.questions) || !Array.isArray(value.outcomes)) {
     return { error: "A pack definition must include questions and outcomes arrays." };
   }
   const definition = value as unknown as PackDefinition;
-  for (const field of ["disqualifiers", "scoring", "showIf", "thresholds"] as const) {
+  for (const field of ["disqualifiers", "scoring", "showIf", "thresholds", "routing", "calculations", "scoringCategories", "sections", "reusableConditions"] as const) {
     const collection = definition[field];
     if (collection !== undefined && (!Array.isArray(collection) || collection.length > 300)) {
       return { error: `Pack ${field} must be an array of at most 300 items.` };
@@ -187,6 +307,11 @@ function validatePackDefinition(value: unknown): { definition?: PackDefinition; 
   }
   if (definition.pricing !== undefined && !isRecord(definition.pricing)) {
     return { error: "Pack pricing must be an object." };
+  }
+  const brandingIssue = validateBrandingShape(definition.branding);
+  if (brandingIssue) return { error: brandingIssue };
+  if (definition.logicVersion !== undefined && (!Number.isSafeInteger(definition.logicVersion) || definition.logicVersion < 1 || definition.logicVersion > 2)) {
+    return { error: "Pack logicVersion must be 1 or 2." };
   }
   if (definition.pricing?.isPaid !== undefined && typeof definition.pricing.isPaid !== "boolean") {
     return { error: "Pack pricing isPaid must be a boolean." };
@@ -220,6 +345,32 @@ function validatePackDefinition(value: unknown): { definition?: PackDefinition; 
   }
   const questionIds = new Set<string>();
   const outcomeIds = new Set<string>();
+  const sectionIds = new Set<string>();
+  const variableIds = new Set<string>();
+  const categoryIds = new Set<string>();
+
+  for (const section of definition.sections ?? []) {
+    if (!section || typeof section.id !== "string" || !section.id.trim() || section.id.length > 120 || sectionIds.has(section.id)) return { error: "Every section needs a unique id of 1–120 characters." };
+    if (typeof section.title !== "string" || !section.title.trim() || section.title.length > 120) return { error: `Section ${section.id} needs a title of 1–120 characters.` };
+    if (section.description !== undefined && (typeof section.description !== "string" || section.description.length > 1000)) return { error: `Section ${section.id} description is too long.` };
+    sectionIds.add(section.id);
+  }
+  for (const variable of definition.calculations ?? []) {
+    if (!variable || typeof variable.id !== "string" || !variable.id.trim() || variable.id.length > 120 || variableIds.has(variable.id)) return { error: "Every calculated variable needs a unique id of 1–120 characters." };
+    if (typeof variable.label !== "string" || !variable.label.trim() || variable.label.length > 120) return { error: `Calculated variable ${variable.id} needs a label.` };
+    variableIds.add(variable.id);
+  }
+  for (const category of definition.scoringCategories ?? []) {
+    if (!category || typeof category.id !== "string" || !category.id.trim() || category.id.length > 120 || categoryIds.has(category.id)) return { error: "Every scoring category needs a unique id of 1–120 characters." };
+    if (typeof category.label !== "string" || !category.label.trim() || category.label.length > 120) return { error: `Scoring category ${category.id} needs a label.` };
+    categoryIds.add(category.id);
+  }
+  const reusableConditionIds = new Set<string>();
+  for (const reusable of definition.reusableConditions ?? []) {
+    if (!reusable || typeof reusable.id !== "string" || !reusable.id.trim() || reusable.id.length > 120 || reusableConditionIds.has(reusable.id)) return { error: "Every reusable condition needs a unique id of 1–120 characters." };
+    if (typeof reusable.label !== "string" || !reusable.label.trim() || reusable.label.length > 120) return { error: `Reusable condition ${reusable.id} needs a label.` };
+    reusableConditionIds.add(reusable.id);
+  }
 
   for (const outcome of definition.outcomes) {
     if (!outcome || typeof outcome.id !== "string" || !outcome.id.trim() || outcome.id.length > 120) {
@@ -266,6 +417,13 @@ function validatePackDefinition(value: unknown): { definition?: PackDefinition; 
     if (question.section !== undefined && (typeof question.section !== "string" || question.section.length > 100)) {
       return { error: `Question ${question.id} section label is too long.` };
     }
+    if (question.sectionId !== undefined && (typeof question.sectionId !== "string" || !sectionIds.has(question.sectionId))) {
+      return { error: `Question ${question.id} refers to a missing section.` };
+    }
+    if (question.min !== undefined && (typeof question.min !== "number" || !Number.isFinite(question.min)) || question.max !== undefined && (typeof question.max !== "number" || !Number.isFinite(question.max))) {
+      return { error: `Question ${question.id} numeric bounds must be finite numbers.` };
+    }
+    if (question.min !== undefined && question.max !== undefined && question.max < question.min) return { error: `Question ${question.id} maximum must be at least its minimum.` };
     if (question.helpText !== undefined && (typeof question.helpText !== "string" || question.helpText.length > 1000)) {
       return { error: `Question ${question.id} help text is too long.` };
     }
@@ -293,6 +451,12 @@ function validatePackDefinition(value: unknown): { definition?: PackDefinition; 
     }
   }
 
+  for (const variable of definition.calculations ?? []) {
+    const issue = validateFormulaExpression(variable.expression, questionIds, variableIds);
+    if (issue) return { error: `Calculated variable ${variable.id}: ${issue}` };
+    if (variable.description !== undefined && (typeof variable.description !== "string" || variable.description.length > 500)) return { error: `Calculated variable ${variable.id} description is too long.` };
+  }
+
   const disqualifierIds = new Set<string>();
   for (const rule of definition.disqualifiers ?? []) {
     if (typeof rule.id !== "string" || !rule.id.trim() || rule.id.length > 120 || disqualifierIds.has(rule.id)) {
@@ -308,9 +472,17 @@ function validatePackDefinition(value: unknown): { definition?: PackDefinition; 
     scoringIds.add(rule.id);
   }
   for (const rule of definition.showIf ?? []) {
-    if (typeof rule.questionId !== "string" || !rule.questionId.trim() || rule.questionId.length > 120) {
-      return { error: "Every visibility rule must target a valid question id." };
+    if (typeof rule.questionId !== "string" || !rule.questionId.trim() || rule.questionId.length > 120 || !questionIds.has(rule.questionId)) {
+      return { error: "Every visibility rule must target an existing question id." };
     }
+  }
+  const routeIds = new Set<string>();
+  for (const rule of definition.routing ?? []) {
+    if (typeof rule.id !== "string" || !rule.id.trim() || rule.id.length > 120 || routeIds.has(rule.id)) return { error: "Every routing rule needs a unique id of 1–120 characters." };
+    routeIds.add(rule.id);
+    if (typeof rule.fromQuestionId !== "string" || !questionIds.has(rule.fromQuestionId)) return { error: `Routing rule ${rule.id} refers to a missing source question.` };
+    if (rule.targetQuestionId !== undefined && rule.targetQuestionId !== null && (typeof rule.targetQuestionId !== "string" || !questionIds.has(rule.targetQuestionId))) return { error: `Routing rule ${rule.id} refers to a missing target question.` };
+    if (rule.priority !== undefined && (typeof rule.priority !== "number" || !Number.isFinite(rule.priority))) return { error: `Routing rule ${rule.id} priority must be a finite number.` };
   }
 
   const rules: Array<{
@@ -322,19 +494,32 @@ function validatePackDefinition(value: unknown): { definition?: PackDefinition; 
     ...(definition.disqualifiers ?? []).map((rule) => ({ name: `Disqualifier ${rule.id}`, group: rule.when, description: rule.reason })),
     ...(definition.scoring ?? []).map((rule) => ({ name: `Scoring rule ${rule.id}`, group: rule.when })),
     ...(definition.showIf ?? []).map((rule) => ({ name: `Visibility rule for ${rule.questionId}`, questionId: rule.questionId, group: rule.when })),
+    ...(definition.routing ?? []).map((rule) => ({ name: `Routing rule ${rule.id}`, questionId: rule.fromQuestionId, group: rule.when })),
+    ...(definition.reusableConditions ?? []).map((condition) => ({ name: `Reusable condition ${condition.id}`, group: condition.when })),
+    ...definition.questions.filter((question) => question.requiredWhen).map((question) => ({ name: `Required rule for ${question.id}`, questionId: question.id, group: question.requiredWhen! })),
   ];
   for (const rule of rules) {
-    if (rule.questionId !== undefined && !questionIds.has(rule.questionId)) return { error: `Visibility rule points to missing question ${rule.questionId}.` };
-    const issue = validateConditionGroup(rule.group, questionIds);
+    if (rule.questionId !== undefined && !questionIds.has(rule.questionId)) return { error: `Rule points to missing question ${rule.questionId}.` };
+    const issue = validateConditionGroup(rule.group, questionIds, variableIds);
     if (issue) return { error: `${rule.name}: ${issue}` };
     if ("description" in rule && (typeof rule.description !== "string" || !rule.description.trim() || rule.description.length > 500)) {
       return { error: `${rule.name} needs a reason of 1–500 characters.` };
     }
   }
   for (const rule of definition.scoring ?? []) {
-    if (!Number.isInteger(rule.points) || Math.abs(rule.points) > 1_000_000) {
-      return { error: `Scoring rule ${rule.id} must use whole-number points between -1,000,000 and 1,000,000.` };
+    if (typeof rule.points !== "number" || !Number.isFinite(rule.points) || Math.abs(rule.points) > 1_000_000) {
+      return { error: `Scoring rule ${rule.id} must use finite points between -1,000,000 and 1,000,000.` };
     }
+    if (rule.categoryId !== undefined && !categoryIds.has(rule.categoryId)) return { error: `Scoring rule ${rule.id} refers to a missing scoring category.` };
+    if (rule.priority !== undefined && (typeof rule.priority !== "number" || !Number.isFinite(rule.priority))) return { error: `Scoring rule ${rule.id} priority must be finite.` };
+    if (rule.label !== undefined && (typeof rule.label !== "string" || rule.label.length > 120)) return { error: `Scoring rule ${rule.id} label is too long.` };
+    if (rule.pointsFormula) {
+      const formulaIssue = validateFormulaExpression(rule.pointsFormula, questionIds, variableIds);
+      if (formulaIssue) return { error: `Scoring rule ${rule.id}: ${formulaIssue}` };
+    }
+  }
+  for (const rule of definition.disqualifiers ?? []) {
+    if (rule.priority !== undefined && (typeof rule.priority !== "number" || !Number.isFinite(rule.priority))) return { error: `Disqualifier ${rule.id} priority must be finite.` };
   }
   const thresholdIds = new Set<string>();
   for (const threshold of definition.thresholds ?? []) {
@@ -349,6 +534,8 @@ function validatePackDefinition(value: unknown): { definition?: PackDefinition; 
       return { error: `Threshold ${threshold.id} max score must be at least its min score.` };
     }
     if (!outcomeIds.has(threshold.outcomeId)) return { error: `Threshold ${threshold.id} points to a missing outcome.` };
+    if (threshold.categoryId !== undefined && !categoryIds.has(threshold.categoryId)) return { error: `Threshold ${threshold.id} refers to a missing scoring category.` };
+    if (threshold.priority !== undefined && (typeof threshold.priority !== "number" || !Number.isFinite(threshold.priority))) return { error: `Threshold ${threshold.id} priority must be finite.` };
   }
   if (definition.outcomes.length > 1 && (!definition.thresholds || definition.thresholds.length === 0)) {
     return { error: "Add at least one score threshold when a pack has multiple outcomes." };
@@ -360,6 +547,8 @@ function validatePackDefinition(value: unknown): { definition?: PackDefinition; 
   ) {
     return { error: "Add a Stripe price id before saving a paid pack." };
   }
+  const logicError = analyzePackLogic(definition).find((diagnostic) => diagnostic.severity === "error");
+  if (logicError) return { error: logicError.message };
   return { definition };
 }
 function isAnswered(value: unknown) {
@@ -390,6 +579,8 @@ function validateQuestionAnswer(question: Question, value: unknown): string | nu
   }
   if (["number", "percent", "scale_1_5", "scale_1_10"].includes(type)) {
     if (typeof value !== "number" || !Number.isFinite(value)) return "Enter a valid number.";
+    if (question.min !== undefined && value < question.min) return `Enter a value of at least ${question.min}.`;
+    if (question.max !== undefined && value > question.max) return `Enter a value no greater than ${question.max}.`;
     if (type === "percent" && (value < 0 || value > 100)) return "Enter a percentage from 0 to 100.";
     if (type === "scale_1_5" && (value < 1 || value > 5 || !Number.isInteger(value))) return "Choose a whole-number value from 1 to 5.";
     if (type === "scale_1_10" && (value < 1 || value > 10 || !Number.isInteger(value))) return "Choose a whole-number value from 1 to 10.";
@@ -416,13 +607,15 @@ function validateAnswers(definition: PackDefinition, value: unknown): { answers?
   }
   const rawAnswers = value as Answers;
   const visibleIds = getVisibleQuestionIds(definition, rawAnswers);
+  const visibleAnswerEntries = Object.fromEntries(Object.entries(rawAnswers).filter(([questionId]) => visibleIds.includes(questionId))) as Answers;
+  const variables = calculateVariables(definition, visibleAnswerEntries).values;
   const answers: Answers = {};
 
   for (const questionId of visibleIds) {
     const question = definition.questions.find((item) => item.id === questionId)!;
     const answer = rawAnswers[questionId];
     if (!isAnswered(answer)) {
-      if (question.required !== false) return { error: `Please answer: ${question.prompt}` };
+      if (isQuestionRequired(question, visibleAnswerEntries, variables)) return { error: `Please answer: ${question.prompt}` };
       continue;
     }
     const issue = validateQuestionAnswer(question, answer);
@@ -617,7 +810,15 @@ export async function registerRoutes(
     if (req.query.preview !== "1") await store.incrementPackViews(pack.id);
 
     return res.json({
-      workspace,
+      workspace: {
+        id: workspace.id,
+        name: workspace.name,
+        slug: workspace.slug,
+        logoUrl: workspace.logoUrl ?? null,
+        primaryColor: workspace.primaryColor ?? null,
+        secondaryColor: workspace.secondaryColor ?? null,
+        brandSettings: workspace.brandSettings ?? {},
+      },
       pack,
       version: {
         id: version.id,
@@ -950,6 +1151,7 @@ export async function registerRoutes(
           logoUrl: workspace.logoUrl ?? null,
           primaryColor: workspace.primaryColor ?? null,
           secondaryColor: workspace.secondaryColor ?? null,
+          brandSettings: workspace.brandSettings ?? {},
         },
         pack: { name: pack.name, slug: pack.slug },
         version: { version: version.version, createdAt: version.createdAt },
@@ -982,14 +1184,55 @@ export async function registerRoutes(
     return res.json({ workspaces });
   });
 
+  // Internal entitlement assignment hook for a future billing provider. No checkout,
+  // subscription, or charge is activated here; advanced logic remains available on every plan.
+  app.put("/api/admin/workspaces/:id/entitlements", adminAuth, async (req, res) => {
+    const plan = req.body?.brandPlan as unknown;
+    if (!["free", "pro", "agency", "legacy"].includes(String(plan))) {
+      return res.status(400).json({ message: "brandPlan must be free, pro, agency, or legacy." });
+    }
+    const existingWorkspace = await store.getWorkspace(String(req.params.id));
+    if (!existingWorkspace) return res.status(404).json({ message: "Workspace not found." });
+    const targetEntitlements = getFeatureEntitlements(plan as BrandPlan);
+    const workspaceBranding = {
+      ...(existingWorkspace.brandSettings ?? {}),
+      ...(existingWorkspace.logoUrl ? { logoUrl: existingWorkspace.logoUrl } : {}),
+      ...(existingWorkspace.primaryColor ? { primaryColor: existingWorkspace.primaryColor } : {}),
+      ...(existingWorkspace.secondaryColor ? { secondaryColor: existingWorkspace.secondaryColor } : {}),
+    };
+    const workspaceIssues = getBrandEntitlementIssues(workspaceBranding, targetEntitlements);
+    if (workspaceIssues.length) return res.status(409).json({ code: "branding_entitlement_required", message: `Cannot assign this tier while workspace branding uses gated features. ${workspaceIssues.join(" ")}` });
+    const packs = await store.listPacks(existingWorkspace.id);
+    for (const pack of packs) {
+      if (!pack.publishedVersionId) continue;
+      const version = await store.getPackVersion(pack.publishedVersionId);
+      if (!version) continue;
+      const packIssues = getBrandEntitlementIssues(version.definition.branding, targetEntitlements);
+      if (packIssues.length) return res.status(409).json({ code: "branding_entitlement_required", message: `Cannot assign this tier while published assessment “${pack.name}” uses gated branding. ${packIssues.join(" ")}` });
+    }
+    const workspace = await store.updateWorkspace(existingWorkspace.id, { brandPlan: plan as BrandPlan });
+    if (!workspace) return res.status(404).json({ message: "Workspace not found." });
+    return res.json({ brandPlan: workspace.brandPlan, entitlements: getFeatureEntitlements(workspace.brandPlan) });
+  });
+
   app.post("/api/admin/workspaces", adminAuth, async (req, res) => {
-    const { name, slug, logoUrl, primaryColor, secondaryColor } = req.body ?? {};
+    const { name, slug, logoUrl, primaryColor, secondaryColor, brandSettings } = req.body ?? {};
     if (
       typeof name !== "string" || !name.trim() || name.trim().length > 120 || !isValidSlug(slug) ||
       !isValidLogoUrl(logoUrl) || !isValidColor(primaryColor) || !isValidColor(secondaryColor)
     ) {
       return res.status(400).json({ message: "Use a workspace name (up to 120 characters), a lowercase URL-safe slug, HTTPS logo URL, and valid hex colors." });
     }
+    const brandingIssue = validateBrandingShape(brandSettings);
+    if (brandingIssue) return res.status(400).json({ message: brandingIssue });
+    const candidateBranding = {
+      ...(isRecord(brandSettings) ? brandSettings : {}),
+      ...(logoUrl ? { logoUrl } : {}),
+      ...(primaryColor ? { primaryColor } : {}),
+      ...(secondaryColor ? { secondaryColor } : {}),
+    };
+    const entitlementIssues = getBrandEntitlementIssues(candidateBranding, getFeatureEntitlements("free"));
+    if (entitlementIssues.length > 0) return res.status(403).json({ code: "branding_entitlement_required", message: entitlementIssues.join(" ") });
 
     try {
       const workspace = await store.createWorkspace({
@@ -998,6 +1241,7 @@ export async function registerRoutes(
         logoUrl,
         primaryColor,
         secondaryColor,
+        brandSettings: brandSettings as PackBranding | undefined,
       });
       return res.status(201).json({ workspace });
     } catch (error) {
@@ -1009,7 +1253,7 @@ export async function registerRoutes(
 
   app.put("/api/admin/workspaces/:id", adminAuth, async (req, res) => {
     const id = String(req.params.id);
-    const { name, slug, logoUrl, primaryColor, secondaryColor } = req.body ?? {};
+    const { name, slug, logoUrl, primaryColor, secondaryColor, brandSettings } = req.body ?? {};
     if (
       name !== undefined && (typeof name !== "string" || !name.trim() || name.trim().length > 120) ||
       slug !== undefined && !isValidSlug(slug) ||
@@ -1017,6 +1261,22 @@ export async function registerRoutes(
     ) {
       return res.status(400).json({ message: "Workspace updates must use a valid name, lowercase slug, HTTPS logo URL, and hex colors." });
     }
+    const brandingIssue = validateBrandingShape(brandSettings);
+    if (brandingIssue) return res.status(400).json({ message: brandingIssue });
+    const existingWorkspace = await store.getWorkspace(id);
+    if (!existingWorkspace) return res.status(404).json({ message: "Not found" });
+    const finalLogoUrl = logoUrl === undefined ? existingWorkspace.logoUrl : logoUrl;
+    const finalPrimaryColor = primaryColor === undefined ? existingWorkspace.primaryColor : primaryColor;
+    const finalSecondaryColor = secondaryColor === undefined ? existingWorkspace.secondaryColor : secondaryColor;
+    const effectiveBrandSettings = isRecord(brandSettings) ? brandSettings : existingWorkspace.brandSettings ?? {};
+    const candidateBranding = {
+      ...effectiveBrandSettings,
+      logoUrl: effectiveBrandSettings.logoUrl ?? (finalLogoUrl || undefined),
+      primaryColor: effectiveBrandSettings.primaryColor ?? (finalPrimaryColor || undefined),
+      secondaryColor: effectiveBrandSettings.secondaryColor ?? (finalSecondaryColor || undefined),
+    };
+    const entitlementIssues = getBrandEntitlementIssues(candidateBranding, getFeatureEntitlements(existingWorkspace.brandPlan));
+    if (entitlementIssues.length > 0) return res.status(403).json({ code: "branding_entitlement_required", message: entitlementIssues.join(" "), entitlements: getFeatureEntitlements(existingWorkspace.brandPlan) });
 
     try {
       const workspace = await store.updateWorkspace(id, {
@@ -1025,6 +1285,7 @@ export async function registerRoutes(
         logoUrl,
         primaryColor,
         secondaryColor,
+        brandSettings: brandSettings as PackBranding | undefined,
       });
       if (!workspace) {
         return res.status(404).json({ message: "Not found" });
@@ -1150,6 +1411,8 @@ export async function registerRoutes(
     if (!workspace) {
       return res.status(404).json({ message: "Workspace not found" });
     }
+    const entitlementIssues = getBrandEntitlementIssues(sourceDefinition.definition.branding, getFeatureEntitlements(workspace.brandPlan));
+    if (entitlementIssues.length > 0) return res.status(403).json({ code: "branding_entitlement_required", message: entitlementIssues.join(" ") });
 
     const pricing = sourceVersion.definition.pricing;
     const isPaid = Boolean(pricing?.isPaid);
@@ -1193,6 +1456,10 @@ export async function registerRoutes(
       }
       const pack = await store.getPack(packId);
       if (!pack) return res.status(404).json({ message: "Pack not found" });
+      const workspace = await store.getWorkspace(pack.workspaceId);
+      if (!workspace) return res.status(404).json({ message: "Workspace not found" });
+      const entitlementIssues = getBrandEntitlementIssues(validation.definition.branding, getFeatureEntitlements(workspace.brandPlan));
+      if (entitlementIssues.length > 0) return res.status(403).json({ code: "branding_entitlement_required", message: entitlementIssues.join(" "), entitlements: getFeatureEntitlements(workspace.brandPlan) });
 
       if (version !== undefined && (!Number.isSafeInteger(version) || version < 1)) {
         return res.status(400).json({ message: "Version must be a positive whole number." });
@@ -1224,11 +1491,15 @@ export async function registerRoutes(
     async (req, res) => {
       const packId = String(req.params.packId);
       const versionId = String(req.params.versionId);
+      const existingPack = await store.getPack(packId);
+      const version = await store.getPackVersion(versionId);
+      if (!existingPack || !version || version.packId !== existingPack.id) return res.status(404).json({ message: "Not found" });
+      const workspace = await store.getWorkspace(existingPack.workspaceId);
+      if (!workspace) return res.status(404).json({ message: "Workspace not found" });
+      const entitlementIssues = getBrandEntitlementIssues(version.definition.branding, getFeatureEntitlements(workspace.brandPlan));
+      if (entitlementIssues.length > 0) return res.status(403).json({ code: "branding_entitlement_required", message: entitlementIssues.join(" ") });
       const pack = await store.publishVersion(packId, versionId);
-      if (!pack) {
-        return res.status(404).json({ message: "Not found" });
-      }
-
+      if (!pack) return res.status(404).json({ message: "Not found" });
       return res.json({ pack });
     },
   );

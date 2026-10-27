@@ -2,7 +2,8 @@ import PDFDocument from "pdfkit";
 import https from "node:https";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import type { PackDefinition, Answers, Outcome, Question } from "@shared/pack";
+import type { PackBranding, PackDefinition, Answers, Outcome, Question } from "@shared/pack";
+import { resolvePackBranding } from "@shared/branding";
 
 export type PdfWorkspace = {
   name: string;
@@ -10,6 +11,7 @@ export type PdfWorkspace = {
   logoUrl: string | null;
   primaryColor: string | null;
   secondaryColor: string | null;
+  brandSettings?: PackBranding;
 };
 
 export type PdfPack = {
@@ -163,6 +165,17 @@ async function fetchLogoBuffer(logoUrl: string): Promise<Buffer | null> {
   }
 }
 
+function decodeLogoDataUrl(value: unknown): Buffer | null {
+  if (typeof value !== "string" || value.length > 700_000) return null;
+  const match = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if (!match) return null;
+  const bytes = Buffer.from(match[2], "base64");
+  if (bytes.length === 0 || bytes.length > 512 * 1024) return null;
+  const isPng = match[1] === "png" && bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const isJpeg = match[1] === "jpeg" && bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  return isPng || isJpeg ? bytes : null;
+}
+
 export async function renderAssessmentPdf(
   doc: PdfDoc,
   data: {
@@ -175,15 +188,17 @@ export async function renderAssessmentPdf(
     timestamp: Date;
   },
 ): Promise<void> {
-  const primary = normalizeColor(data.workspace.primaryColor, "#0f172a");
-  const secondary = normalizeColor(data.workspace.secondaryColor, "#64748b");
+  const branding = resolvePackBranding(data.workspace, data.definition.branding);
+  const primary = normalizeColor(branding.primaryColor, "#4f46e5");
+  const secondary = normalizeColor(branding.secondaryColor, "#64748b");
+  const brandName = branding.brandName || data.workspace.name;
 
   doc.rect(0, 0, doc.page.width, 110).fill(primary);
   doc.fillColor("#ffffff");
 
-  const logoBuffer = data.workspace.logoUrl
-    ? await fetchLogoBuffer(data.workspace.logoUrl)
-    : null;
+  const logoBuffer = decodeLogoDataUrl(branding.logoDataUrl) ?? (branding.logoUrl
+    ? await fetchLogoBuffer(branding.logoUrl)
+    : null);
 
   const headerY = 30;
   const leftMargin = doc.page.margins.left;
@@ -191,14 +206,14 @@ export async function renderAssessmentPdf(
   if (logoBuffer) {
     try {
       doc.image(logoBuffer, leftMargin, headerY, { width: 50, height: 50 });
-      doc.fontSize(22).text(data.workspace.name, leftMargin + 64, headerY + 8, {
+      doc.fontSize(22).text(brandName, leftMargin + 64, headerY + 8, {
         continued: false,
       });
     } catch (error) {
-      doc.fontSize(22).text(data.workspace.name, leftMargin, headerY + 8);
+      doc.fontSize(22).text(brandName, leftMargin, headerY + 8);
     }
   } else {
-    doc.fontSize(22).text(data.workspace.name, leftMargin, headerY + 8);
+    doc.fontSize(22).text(brandName, leftMargin, headerY + 8);
   }
 
   doc

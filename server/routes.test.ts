@@ -514,3 +514,74 @@ test("Stripe webhook signature verification and duplicate delivery are safe", as
   assert.equal(first.body.received, true);
   assert.equal((await harness.storage.getSubmission(submissionId))?.paid, true);
 });
+
+test("advanced logic stays available on free workspaces while branded entitlements are enforced server-side", async (t) => {
+  const harness = await createHarness();
+  t.after(() => closeServer(harness.server));
+  const workspace = await harness.storage.createWorkspace({ name: "Studio Test", slug: "studio-test" });
+  const pack = await harness.storage.createPack({ workspaceId: workspace.id, name: "Logic Test", slug: "logic-test" });
+  const definition = {
+    name: "Logic Test",
+    logicVersion: 2,
+    questions: [
+      { id: "consent", prompt: "Continue?", type: "yesno", required: true },
+      { id: "amount", prompt: "Amount", type: "number", required: false, requiredWhen: { all: [{ questionId: "consent", operator: "equals", value: true }] } },
+    ],
+    outcomes: [{ id: "result", title: "Result" }],
+    calculations: [{ id: "twice", label: "Twice", expression: { op: "multiply", args: [{ op: "answer", questionId: "amount" }, { op: "literal", value: 2 }] } }],
+    scoringCategories: [{ id: "readiness", label: "Readiness" }],
+    scoring: [{ id: "weighted", label: "Weighted amount", points: 0, pointsFormula: { op: "variable", variableId: "twice" }, categoryId: "readiness", when: { all: [{ variableId: "twice", operator: "gte", value: 2 }] } }],
+    reusableConditions: [{ id: "consent-template", label: "Consent is yes", when: { all: [{ questionId: "consent", operator: "equals", value: true }] } }],
+    routing: [{ id: "finish-on-no", fromQuestionId: "consent", targetQuestionId: null, when: { all: [{ questionId: "consent", operator: "equals", value: false }] }, priority: 10 }],
+    thresholds: [],
+  };
+  const createVersion = (payload: unknown) => requestJson<{ version?: { id: string }; message?: string }>(
+    harness.baseUrl,
+    `/api/admin/packs/${pack.id}/versions`,
+    { admin: true, body: { definition: payload } },
+  );
+
+  const freeLogic = await createVersion(definition);
+  assert.equal(freeLogic.response.status, 201, freeLogic.body.message);
+  assert.ok(freeLogic.body.version?.id);
+
+  const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
+  const lockedBrand = await createVersion({ ...definition, branding: { logoDataUrl: `data:image/png;base64,${pngSignature}` } });
+  assert.equal(lockedBrand.response.status, 403);
+  assert.equal((lockedBrand.body as { code?: string }).code, "branding_entitlement_required");
+
+  const freeWorkspaceUpdate = await requestJson(harness.baseUrl, `/api/admin/workspaces/${workspace.id}`, {
+    method: "PUT", admin: true, body: { secondaryColor: "#123456" },
+  });
+  assert.equal(freeWorkspaceUpdate.response.status, 403);
+
+  const plan = await requestJson<{ brandPlan?: string }>(harness.baseUrl, `/api/admin/workspaces/${workspace.id}/entitlements`, {
+    method: "PUT", admin: true, body: { brandPlan: "pro" },
+  });
+  assert.equal(plan.response.status, 200);
+  assert.equal(plan.body.brandPlan, "pro");
+
+  const workspaceBranding = await requestJson<{ workspace?: { brandSettings?: { themePreset?: string } }; message?: string }>(harness.baseUrl, `/api/admin/workspaces/${workspace.id}`, {
+    method: "PUT", admin: true, body: { brandSettings: { logoDataUrl: `data:image/png;base64,${pngSignature}`, themePreset: "ocean", primaryColor: "#087e8b", secondaryColor: "#35a7a0", backgroundColor: "#f1fbfb" } },
+  });
+  assert.equal(workspaceBranding.response.status, 200, workspaceBranding.body.message);
+  assert.equal(workspaceBranding.body.workspace?.brandSettings?.themePreset, "ocean");
+
+  const proDefinition = { ...definition, branding: { brandName: "Studio Brand", themePreset: "grove", secondaryColor: "#7aaa72", backgroundColor: "#f5faf5", textColor: "#1f3328" } };
+  const proVersion = await createVersion(proDefinition);
+  assert.equal(proVersion.response.status, 201, proVersion.body.message);
+  assert.ok(proVersion.body.version?.id);
+
+  const downgrade = await requestJson<{ message?: string }>(harness.baseUrl, `/api/admin/workspaces/${workspace.id}/entitlements`, {
+    method: "PUT", admin: true, body: { brandPlan: "free" },
+  });
+  assert.equal(downgrade.response.status, 409);
+  assert.match(downgrade.body.message ?? "", /gated features/i);
+
+  const published = await requestJson(harness.baseUrl, `/api/admin/packs/${pack.id}/publish/${proVersion.body.version?.id}`, { method: "POST", admin: true });
+  assert.equal(published.response.status, 200);
+  const publicPayload = await requestJson<{ workspace?: Record<string, unknown> }>(harness.baseUrl, `/api/public/w/${workspace.slug}/${pack.slug}`);
+  assert.equal(publicPayload.response.status, 200);
+  assert.equal(publicPayload.body.workspace?.brandPlan, undefined, "internal entitlement tier is not exposed publicly");
+  assert.equal((publicPayload.body.workspace?.brandSettings as Record<string, unknown> | undefined)?.themePreset, "ocean");
+});

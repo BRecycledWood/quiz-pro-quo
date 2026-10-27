@@ -255,13 +255,17 @@ function extractSimpleState(definition: PackDefinition | null, fallbackName = ""
   const disqualifiers = (definition?.disqualifiers ?? []).map((rule) => ({
     id: rule.id ?? createId(),
     reason: rule.reason ?? "",
-    conditions: rule.when?.all ? deepClone(rule.when.all) : [],
+    conditions: rule.when?.all
+      ? deepClone(rule.when.all.filter((node): node is Condition => "operator" in node))
+      : [],
   }));
 
   const scoring = (definition?.scoring ?? starterDefinition?.scoring ?? []).map((rule) => ({
     id: rule.id ?? createId(),
     points: typeof rule.points === "number" ? rule.points : ("" as const),
-    conditions: rule.when?.all ? deepClone(rule.when.all) : [],
+    conditions: rule.when?.all
+      ? deepClone(rule.when.all.filter((node): node is Condition => "operator" in node))
+      : [],
   }));
 
   const thresholds = (definition?.thresholds ?? starterDefinition?.thresholds ?? []).map((rule) => ({
@@ -309,6 +313,13 @@ function extractSimpleState(definition: PackDefinition | null, fallbackName = ""
 }
 
 function mergeConditionGroup(base: ConditionGroup | undefined, conditions: Condition[]) {
+  const existing = base?.all ?? [];
+  const existingLeaves = existing.filter((node): node is Condition => "operator" in node);
+  // The legacy form editor only exposes leaf conditions. Preserve nested groups
+  // when those visible leaves were not edited, rather than silently flattening logic.
+  if (existing.length !== existingLeaves.length && JSON.stringify(existingLeaves) === JSON.stringify(conditions)) {
+    return deepClone(base!);
+  }
   return {
     ...(base ?? {}),
     all: conditions,
@@ -1318,6 +1329,7 @@ export default function PacksAdmin() {
             <p className="text-sm text-muted-foreground">Manage workspaces, packs, and quiz versions.</p>
           </div>
           <div className="flex items-center gap-2">
+            <Link href="/admin/studio"><Button size="sm">Open Builder Studio</Button></Link>
             <Link href="/admin/analytics"><Button variant="outline" size="sm">Analytics</Button></Link>
             <Link href="/"><Button variant="ghost" size="sm">View site</Button></Link>
             <Button

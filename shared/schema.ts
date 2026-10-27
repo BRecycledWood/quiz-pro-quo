@@ -10,6 +10,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import type { BrandPlan, PackBranding } from "./pack";
 
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -32,6 +33,8 @@ export const workspaces = pgTable("workspaces", {
   logoUrl: text("logo_url"),
   primaryColor: text("primary_color"),
   secondaryColor: text("secondary_color"),
+  brandSettings: jsonb("brand_settings").$type<PackBranding>().notNull().default({}),
+  brandPlan: text("brand_plan").$type<BrandPlan>().notNull().default("free"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
