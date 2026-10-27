@@ -1,0 +1,60 @@
+# Isolated Builder Studio staging service for PR #1.
+# In Render, select this file as the Blueprint path; do not use render.yaml.
+services:
+  - type: web
+    name: quiz-pro-quo-builder-staging
+    runtime: node
+    plan: 0.5c-512mb # Render Starter compute: currently $7/month.
+    region: virginia
+    branch: arena/686d76f2-quiz-pro-quo
+    autoDeployTrigger: checksPass
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: PUBLIC_APP_URL
+        fromService:
+          type: web
+          name: quiz-pro-quo-builder-staging
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: DATABASE_URL
+        fromDatabase:
+          name: quiz-pro-quo-builder-staging-db
+          property: connectionString
+      - key: ADMIN_KEY
+        generateValue: true
+      - key: DISABLE_EXTERNAL_SIDE_EFFECTS
+        value: "true"
+      - key: SEED_DEMO_DATA
+        value: "false"
+      # Explicitly keep real payments and email delivery disabled in staging.
+      - key: STRIPE_SECRET_KEY
+        value: ""
+      - key: STRIPE_WEBHOOK_SECRET
+        value: ""
+      - key: SMTP_HOST
+        value: ""
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_SECURE
+        value: "false"
+      - key: SMTP_USER
+        value: ""
+      - key: SMTP_PASSWORD
+        value: ""
+      - key: EMAIL_FROM
+        value: ""
+      - key: LEAD_NOTIFICATION_EMAIL
+        value: ""
+
+databases:
+  - name: quiz-pro-quo-builder-staging-db
+    databaseName: quiz_pro_quo_staging
+    user: quiz_pro_quo_staging
+    plan: 0.1c-256mb # Currently $6/month; isolated from the production DB.
+    region: virginia
+    ipAllowList: [] # Private/internal connections only; service is in the same region.

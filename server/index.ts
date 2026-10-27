@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { isVercelStudioPreviewAuthEnabled } from "./preview-auth";
+import { emailIsConfigured, stripeIsConfigured } from "./external-side-effects";
 
 if (process.env.NODE_ENV === "production") {
   const adminKey = process.env.ADMIN_KEY?.trim();
@@ -89,13 +90,8 @@ app.get("/healthz", async (_req, res) => {
       ok: true,
       storage: storageType,
       publicAppUrlConfigured: Boolean(process.env.PUBLIC_APP_URL),
-      stripeConfigured: Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET),
-      emailConfigured: Boolean(
-        process.env.SMTP_HOST &&
-        process.env.SMTP_USER &&
-        process.env.SMTP_PASSWORD &&
-        process.env.EMAIL_FROM,
-      ),
+      stripeConfigured: stripeIsConfigured(),
+      emailConfigured: emailIsConfigured(),
     });
   } catch {
     return res.status(503).json({ ok: false, storage: storageType });

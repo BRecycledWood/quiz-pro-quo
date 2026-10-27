@@ -585,3 +585,39 @@ test("advanced logic stays available on free workspaces while branded entitlemen
   assert.equal(publicPayload.body.workspace?.brandPlan, undefined, "internal entitlement tier is not exposed publicly");
   assert.equal((publicPayload.body.workspace?.brandSettings as Record<string, unknown> | undefined)?.themePreset, "ocean");
 });
+
+test("the staging external-side-effects kill switch blocks Stripe even when secrets are present", async (t) => {
+  const sideEffectKeys = ["DISABLE_EXTERNAL_SIDE_EFFECTS", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"] as const;
+  const original = new Map(sideEffectKeys.map((key) => [key, process.env[key]]));
+  for (const [key, value] of [
+    ["DISABLE_EXTERNAL_SIDE_EFFECTS", "true"],
+    ["STRIPE_SECRET_KEY", "test-placeholder-stripe-secret"],
+    ["STRIPE_WEBHOOK_SECRET", "test-placeholder-webhook-secret"],
+  ] as const) process.env[key] = value;
+
+  const app = express();
+  app.use(express.json());
+  const server = createServer(app);
+  await registerRoutes(server, app, { storage: new MemStorage() });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  t.after(async () => {
+    await closeServer(server);
+    for (const [key, value] of original) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  const { response, body } = await requestJson<{ message?: string }>(
+    `http://127.0.0.1:${address.port}`,
+    "/api/stripe/webhook",
+    { headers: { "stripe-signature": "test-placeholder-signature" }, body: {} },
+  );
+  assert.equal(response.status, 503);
+  assert.match(body.message ?? "", /not configured/i);
+});

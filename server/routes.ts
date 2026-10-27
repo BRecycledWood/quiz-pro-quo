@@ -7,6 +7,7 @@ import type { Answers, BrandPlan, ConditionGroup, FormulaExpression, PackBrandin
 import { getBrandEntitlementIssues, getFeatureEntitlements } from "@shared/entitlements";
 import { BRAND_THEME_PRESETS } from "@shared/branding";
 import { isVercelStudioPreviewAuthEnabled } from "./preview-auth";
+import { emailIsConfigured, externalSideEffectsDisabled, stripeIsConfigured } from "./external-side-effects";
 import type { Submission } from "@shared/schema";
 import { renderAssessmentPdf } from "./pdf";
 import PDFDocument from "pdfkit";
@@ -650,6 +651,7 @@ export type RouteDependencies = {
 };
 
 function getStripeClient(): Stripe | null {
+  if (externalSideEffectsDisabled()) return null;
   if (stripeClient !== undefined) return stripeClient;
   const secretKey = process.env.STRIPE_SECRET_KEY;
   if (!secretKey) {
@@ -833,13 +835,8 @@ export async function registerRoutes(
       },
       definition: version.definition,
       publicAppUrlConfigured: Boolean(process.env.PUBLIC_APP_URL),
-      emailConfigured: Boolean(
-        process.env.SMTP_HOST &&
-        process.env.SMTP_USER &&
-        process.env.SMTP_PASSWORD &&
-        process.env.EMAIL_FROM,
-      ),
-      stripeConfigured: Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET),
+      emailConfigured: emailIsConfigured(),
+      stripeConfigured: stripeIsConfigured(),
     });
   });
 
@@ -1553,7 +1550,7 @@ export async function registerRoutes(
     const answers = validated.answers;
     const evaluation = evaluatePack(version.definition, answers);
     const isPaidReport = Boolean(version.definition.pricing?.isPaid);
-    const emailConfigured = !isPaidReport && Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD && process.env.EMAIL_FROM);
+    const emailConfigured = !isPaidReport && emailIsConfigured();
 
     // Submissions are immutable after their first completion. This makes retries safe
     // and prevents a repeat request from changing the lead's identity or answers.
