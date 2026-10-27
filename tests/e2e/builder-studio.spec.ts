@@ -95,7 +95,12 @@ test("Builder Studio authors, previews, brands, saves, and publishes without cre
 
   await page.getByRole("button", { name: "Save version" }).click();
   await expect(page.getByRole("status")).toContainText("Saved version 1");
+  const publishResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST" && new URL(response.url()).pathname.includes("/publish/"),
+  );
   await page.getByRole("button", { name: "Publish", exact: false }).click();
+  const publishResponse = await publishResponsePromise;
+  expect(publishResponse.status()).toBe(200);
   await expect(page.getByRole("status")).toContainText("Published successfully");
 
   const publicResponse = await request.get(`/api/public/w/${workspaceSlug}/${packSlug}`);

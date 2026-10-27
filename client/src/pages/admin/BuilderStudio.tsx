@@ -363,6 +363,7 @@ export default function BuilderStudio() {
     }
     let cancelled = false;
     setPageError("");
+    setNotice("");
     adminRequest<{ versions: StudioVersion[] }>(`/api/admin/packs/${selectedPackId}/versions`).then(({ versions: loaded }) => {
       if (cancelled) return;
       const next = [...(loaded ?? [])].sort((left, right) => right.version - left.version);
@@ -375,13 +376,12 @@ export default function BuilderStudio() {
         setSelectedVersionId("");
         setDraft(createStarterDefinition(selectedPack.name));
       }
-      setSelectedQuestionId(preferred?.definition.questions[0]?.id ?? (preferred ? "" : ""));
-      setNotice("");
+      setSelectedQuestionId(preferred?.definition.questions[0]?.id ?? "");
     }).catch((error: unknown) => {
       if (!cancelled) setPageError(error instanceof Error ? error.message : "Unable to load versions.");
     });
     return () => { cancelled = true; };
-  }, [adminRequest, adminKey, selectedPackId, selectedPack?.publishedVersionId]);
+  }, [adminRequest, adminKey, selectedPackId]);
 
   useEffect(() => {
     if (!draft) {
