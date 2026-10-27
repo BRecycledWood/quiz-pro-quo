@@ -4,7 +4,7 @@ services:
   - type: web
     name: quiz-pro-quo-builder-staging
     runtime: node
-    plan: 0.5c-512mb # Render Starter compute: currently $7/month.
+    plan: free # Render Free web service; may sleep when idle.
     region: virginia
     branch: arena/686d76f2-quiz-pro-quo
     autoDeployTrigger: checksPass
@@ -22,9 +22,7 @@ services:
           name: quiz-pro-quo-builder-staging
           envVarKey: RENDER_EXTERNAL_URL
       - key: DATABASE_URL
-        fromDatabase:
-          name: quiz-pro-quo-builder-staging-db
-          property: connectionString
+        sync: false # Paste the isolated Neon Free Postgres connection string in Render.
       - key: ADMIN_KEY
         generateValue: true
       - key: DISABLE_EXTERNAL_SIDE_EFFECTS
@@ -51,10 +49,6 @@ services:
       - key: LEAD_NOTIFICATION_EMAIL
         value: ""
 
-databases:
-  - name: quiz-pro-quo-builder-staging-db
-    databaseName: quiz_pro_quo_staging
-    user: quiz_pro_quo_staging
-    plan: 0.1c-256mb # Currently $6/month; isolated from the production DB.
-    region: virginia
-    ipAllowList: [] # Private/internal connections only; service is in the same region.
+# Neon Free Postgres is intentionally external to this Blueprint. Create one
+# isolated Neon project/database and add its connection string as DATABASE_URL
+# in the Render service environment. Production render.yaml is unchanged.
