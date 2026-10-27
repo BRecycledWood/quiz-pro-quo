@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, KeyboardEvent } from "react";
 import { Link } from "wouter";
-import { Lock, ArrowLeft } from "lucide-react";
+import { Lock, ArrowLeft, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -1265,23 +1265,26 @@ export default function PacksAdmin() {
 
   if (!adminKey) {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4">
-        <div className="w-full max-w-sm space-y-8">
-          <div className="text-center space-y-3">
+      <div className="relative min-h-screen overflow-hidden bg-[#f7f8fc] px-4 py-12 text-foreground dark:bg-background">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(79,70,229,0.12),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(129,140,248,0.12),transparent_30%)]" />
+        <div className="relative mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-md items-center">
+          <div className="w-full rounded-[2rem] border bg-card/95 p-7 shadow-2xl shadow-indigo-950/10 backdrop-blur sm:p-9">
+          <div className="space-y-4">
             <div className="flex justify-center">
-              <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary ring-8 ring-primary/5">
                 <Lock className="w-7 h-7" />
               </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display">Admin Access</h1>
-              <p className="text-sm text-muted-foreground mt-1">
-                This panel is for QuizProQuo platform operators only.
+            <div className="text-center">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">Quiz Pro Quo · Operator console</p>
+              <h1 className="mt-2 text-2xl font-bold font-display tracking-tight">Welcome back</h1>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Enter the admin key from your staging service to manage assessments, workspaces, and publishing.
               </p>
             </div>
           </div>
 
-          <div className="space-y-3">
+          <div className="mt-7 space-y-3">
             <Label htmlFor="gate-key">Admin key</Label>
             <Input
               id="gate-key"
@@ -1294,42 +1297,48 @@ export default function PacksAdmin() {
               placeholder="Enter your admin key"
               autoFocus
             />
-            <Button className="w-full" onClick={handleSaveAdminKey}>
-              Enter
+            <Button className="w-full gap-2" onClick={handleSaveAdminKey}>
+              Continue to admin <ArrowRight className="h-4 w-4" />
             </Button>
           </div>
 
-          <div className="text-center space-y-2 text-sm text-muted-foreground">
-            <p>Don't have an admin key?</p>
+          <div className="mt-6 rounded-xl border bg-muted/30 p-3 text-center text-xs leading-5 text-muted-foreground">
+            The key stays in this browser and is only sent to protected admin routes. Never paste it into chat or commit it to the repository.
+          </div>
+
+          <div className="mt-6 space-y-2 text-center text-sm text-muted-foreground">
+            <p>Need access?</p>
             <a
               href="mailto:hello@howstud.io?subject=QuizProQuo%20Admin%20Access"
               className="text-primary hover:underline font-medium"
             >
-              Contact us to get access →
+              Contact HOWstud.io for access →
             </a>
           </div>
 
-          <div className="text-center">
+          <div className="mt-5 text-center">
             <Link href="/" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
               <ArrowLeft className="w-3 h-3" />
               Back to home
             </Link>
           </div>
         </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto w-full max-w-5xl px-6 py-10 space-y-6">
-        <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-[#f7f8fc] text-foreground dark:bg-background">
+      <div className="mx-auto w-full max-w-6xl space-y-7 px-4 py-6 sm:px-6 sm:py-9">
+        <div className="flex flex-col gap-5 rounded-2xl border bg-card/90 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-6">
           <div>
-            <h1 className="text-xl font-bold">Pack Admin</h1>
-            <p className="text-sm text-muted-foreground">Manage workspaces, packs, and quiz versions.</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">Quiz Pro Quo · Control center</p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight">Pack Admin</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Manage workspaces, assessments, versions, and publishing.</p>
           </div>
-          <div className="flex items-center gap-2">
-            <Link href="/admin/studio"><Button size="sm">Open Builder Studio</Button></Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href="/admin/studio"><Button size="sm" className="gap-1.5">Open Builder Studio <ArrowRight className="h-3.5 w-3.5" /></Button></Link>
             <Link href="/admin/analytics"><Button variant="outline" size="sm">Analytics</Button></Link>
             <Link href="/"><Button variant="ghost" size="sm">View site</Button></Link>
             <Button
