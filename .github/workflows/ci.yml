@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [arena/686d76f2-quiz-pro-quo]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, test, build, and security audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: quiz_pro_quo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d quiz_pro_quo_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/quiz_pro_quo_test
+      CI: "true"
+
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --registry=https://registry.npmjs.org/
+
+      - name: TypeScript check (application and tests)
+        run: npm run check
+
+      - name: Unit, API, Stripe-mock, and PostgreSQL migration tests
+        run: npm test
+
+      - name: Dependency security audit
+        run: npm audit --audit-level=high --registry=https://registry.npmjs.org/
+
+      - name: Production build
+        run: npm run build
+
+      - name: Run bundled database migration command
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/quiz_pro_quo_test
+        run: npm run db:push
+
+      - name: Production startup smoke test
+        run: npm run test:prod
+
+      - name: Install Chromium for browser E2E
+        run: npx playwright install --with-deps chromium
+
+      - name: Public-flow browser E2E
+        run: npm run test:e2e

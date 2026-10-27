@@ -3,6 +3,8 @@ dist
 .DS_Store
 server/public
 vite.config.ts.*
+playwright-report
+test-results
 *.tar.gz
 .env
 .env.*

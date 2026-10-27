@@ -1,9 +1,53 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
+import { storage } from "./storage";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 
+if (process.env.NODE_ENV === "production") {
+  const adminKey = process.env.ADMIN_KEY?.trim();
+  if (!adminKey || adminKey.length < 32) {
+    throw new Error("ADMIN_KEY must be configured with at least 32 characters in production.");
+  }
+  const publicAppUrl = process.env.PUBLIC_APP_URL;
+  let parsedPublicAppUrl: URL | null = null;
+  try {
+    parsedPublicAppUrl = publicAppUrl ? new URL(publicAppUrl) : null;
+  } catch {
+    parsedPublicAppUrl = null;
+  }
+  if (
+    !parsedPublicAppUrl ||
+    parsedPublicAppUrl.protocol !== "https:" ||
+    Boolean(parsedPublicAppUrl.username || parsedPublicAppUrl.password) ||
+    parsedPublicAppUrl.hostname === "localhost" ||
+    parsedPublicAppUrl.pathname !== "/" ||
+    parsedPublicAppUrl.search ||
+    parsedPublicAppUrl.hash
+  ) {
+    throw new Error("PUBLIC_APP_URL must be a valid HTTPS origin in production.");
+  }
+}
+
 const app = express();
+app.disable("x-powered-by");
+const trustProxyHops = process.env.TRUST_PROXY_HOPS === undefined
+  ? process.env.NODE_ENV === "production" ? 1 : 0
+  : Number(process.env.TRUST_PROXY_HOPS);
+if (!Number.isSafeInteger(trustProxyHops) || trustProxyHops < 0 || trustProxyHops > 10) {
+  throw new Error("TRUST_PROXY_HOPS must be an integer between 0 and 10.");
+}
+app.set("trust proxy", trustProxyHops);
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (process.env.NODE_ENV === "production") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+  next();
+});
 const httpServer = createServer(app);
 
 declare module "http" {
@@ -14,27 +58,34 @@ declare module "http" {
 
 app.use(
   express.json({
+    limit: "100kb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
   }),
 );
 
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: "100kb" }));
 
-app.get("/healthz", (_req, res) => {
-  res.json({
-    ok: true,
-    storage: process.env.DATABASE_URL ? "postgres" : "memory",
-    publicAppUrlConfigured: Boolean(process.env.PUBLIC_APP_URL),
-    stripeConfigured: Boolean(process.env.STRIPE_SECRET_KEY),
-    emailConfigured: Boolean(
-      process.env.SMTP_HOST &&
-      process.env.SMTP_USER &&
-      process.env.SMTP_PASSWORD &&
-      process.env.EMAIL_FROM,
-    ),
-  });
+app.get("/healthz", async (_req, res) => {
+  const storageType = process.env.DATABASE_URL ? "postgres" : "memory";
+  try {
+    await storage.healthCheck();
+    return res.json({
+      ok: true,
+      storage: storageType,
+      publicAppUrlConfigured: Boolean(process.env.PUBLIC_APP_URL),
+      stripeConfigured: Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET),
+      emailConfigured: Boolean(
+        process.env.SMTP_HOST &&
+        process.env.SMTP_USER &&
+        process.env.SMTP_PASSWORD &&
+        process.env.EMAIL_FROM,
+      ),
+    });
+  } catch {
+    return res.status(503).json({ ok: false, storage: storageType });
+  }
 });
 
 export function log(message: string, source = "express") {
@@ -51,26 +102,11 @@ export function log(message: string, source = "express") {
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
   res.on("finish", () => {
-    const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
+      log(`${req.method} ${path} ${res.statusCode} in ${Date.now() - start}ms`);
     }
   });
-
   next();
 });
 
@@ -98,7 +134,9 @@ app.use((req, res, next) => {
       return next(err);
     }
 
-    return res.status(status).json({ message });
+    return res.status(status).json({
+      message: status >= 500 ? "Internal server error" : message,
+    });
   });
 
   if (process.env.NODE_ENV === "production") {

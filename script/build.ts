@@ -29,7 +29,6 @@ const allowlist = [
   "ws",
   "xlsx",
   "zod",
-  "zod-validation-error",
 ];
 
 async function buildAll() {
@@ -57,6 +56,20 @@ async function buildAll() {
     },
     minify: true,
     external: externals,
+    logLevel: "info",
+  });
+
+  await esbuild({
+    entryPoints: ["script/migrate.ts"],
+    platform: "node",
+    bundle: true,
+    format: "cjs",
+    outfile: "dist/migrate.cjs",
+    define: {
+      "process.env.NODE_ENV": '"production"',
+    },
+    minify: true,
+    external: ["pg"],
     logLevel: "info",
   });
 }

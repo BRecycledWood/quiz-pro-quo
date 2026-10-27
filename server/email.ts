@@ -18,10 +18,13 @@ function getEmailConfig(): EmailConfig | null {
 
   if (!host || !user || !pass || !from) return null;
 
-  const port = Number(process.env.SMTP_PORT ?? 587);
+  const configuredPort = Number(process.env.SMTP_PORT ?? 587);
+  const port = Number.isInteger(configuredPort) && configuredPort >= 1 && configuredPort <= 65_535
+    ? configuredPort
+    : 587;
   return {
     host,
-    port: Number.isFinite(port) ? port : 587,
+    port,
     secure: process.env.SMTP_SECURE === "true" || port === 465,
     user,
     pass,
@@ -120,15 +123,18 @@ export async function sendResultsEmail(params: {
 </body>
 </html>`;
 
+  const safePackSlug = params.packSlug.replace(/[^a-zA-Z0-9-]/g, "-").slice(0, 80) || "assessment";
+  const safePackNameForHeader = params.packName.replace(/[\r\n]+/g, " ").slice(0, 120);
+  const safeWorkspaceNameForHeader = params.workspaceName.replace(/[\r\n"<>]+/g, " ").slice(0, 120);
   try {
     await transporter.sendMail({
-      from: `"${params.workspaceName.replace(/[\r\n"]+/g, " ")}" <${config!.from}>`,
+      from: `"${safeWorkspaceNameForHeader}" <${config!.from}>`,
       to: params.to,
-      subject: `Your ${params.packName} Results`,
+      subject: `Your ${safePackNameForHeader} Results`,
       html,
       attachments: [
         {
-          filename: `${params.packSlug}-report.pdf`,
+          filename: `${safePackSlug}-report.pdf`,
           content: params.pdfBuffer,
           contentType: "application/pdf",
         },
@@ -171,6 +177,7 @@ export async function sendLeadNotification(params: {
     .map(([k, v]) => `<tr><td style="padding:8px 12px;color:#6b7280;font-size:13px;border-bottom:1px solid #f1f5f9;white-space:nowrap;">${k}</td><td style="padding:8px 12px;color:#111827;font-size:13px;border-bottom:1px solid #f1f5f9;">${v}</td></tr>`)
     .join("");
 
+  const safePackNameForHeader = params.packName.replace(/[\r\n]+/g, " ").slice(0, 120);
   const html = `
 <!DOCTYPE html>
 <html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f9fafb;padding:32px;">
@@ -184,7 +191,7 @@ export async function sendLeadNotification(params: {
     await transporter.sendMail({
       from: `"QuizProQuo Leads" <${config!.from}>`,
       to: config!.leadTo,
-      subject: `New Lead — ${params.packName}: ${params.leadEmail}`,
+      subject: `New Lead — ${safePackNameForHeader}: ${params.leadEmail}`,
       html,
     });
   } catch (err) {

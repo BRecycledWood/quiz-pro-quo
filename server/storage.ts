@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { Pool } from "pg";
+import { Pool, type PoolConfig } from "pg";
 import type { PackDefinition } from "@shared/pack";
 import type { Pack, PackVersion, Submission, Workspace } from "@shared/schema";
 
@@ -76,6 +76,18 @@ export type SubmissionUpdateInput = {
   completedAt?: Date | null;
 };
 
+export type SubmissionCompletionInput = {
+  email: string;
+  firstName: string | null;
+  answers: Record<string, unknown>;
+  score: number;
+  outcomeId: string | null;
+  outcomeLabel: string | null;
+  paid: boolean;
+  amountPaidCents: number;
+  stripeSessionId: string | null;
+};
+
 export type WorkspaceStats = {
   totalViews: number;
   totalSubmissions: number;
@@ -116,6 +128,7 @@ export type PackStats = {
 };
 
 export interface IStorage {
+  healthCheck(): Promise<void>;
   listWorkspaces(): Promise<Workspace[]>;
   getWorkspace(id: string): Promise<Workspace | undefined>;
   getWorkspaceBySlug(slug: string): Promise<Workspace | undefined>;
@@ -136,6 +149,7 @@ export interface IStorage {
   publishVersion(packId: string, versionId: string): Promise<Pack | undefined>;
 
   createSubmission(input: SubmissionCreateInput): Promise<Submission>;
+  completeSubmission(id: string, data: SubmissionCompletionInput): Promise<{ submission?: Submission; newlyCompleted: boolean }>;
   updateSubmission(id: string, data: SubmissionUpdateInput): Promise<Submission | undefined>;
   getSubmissionsByPack(packId: string): Promise<Submission[]>;
   getSubmissionsByWorkspace(workspaceId: string): Promise<Submission[]>;
@@ -286,6 +300,8 @@ export class MemStorage implements IStorage {
     this.seed();
   }
 
+  async healthCheck(): Promise<void> {}
+
   async listWorkspaces(): Promise<Workspace[]> {
     return Array.from(this.workspaces.values());
   }
@@ -323,9 +339,9 @@ export class MemStorage implements IStorage {
       ...workspace,
       name: input.name ?? workspace.name,
       slug: input.slug ?? workspace.slug,
-      logoUrl: input.logoUrl ?? workspace.logoUrl,
-      primaryColor: input.primaryColor ?? workspace.primaryColor,
-      secondaryColor: input.secondaryColor ?? workspace.secondaryColor,
+      logoUrl: input.logoUrl !== undefined ? input.logoUrl : workspace.logoUrl,
+      primaryColor: input.primaryColor !== undefined ? input.primaryColor : workspace.primaryColor,
+      secondaryColor: input.secondaryColor !== undefined ? input.secondaryColor : workspace.secondaryColor,
       updatedAt: new Date(),
     };
     this.workspaces.set(id, updated);
@@ -381,7 +397,7 @@ export class MemStorage implements IStorage {
       name: input.name ?? pack.name,
       slug: input.slug ?? pack.slug,
       isPaid: input.isPaid ?? pack.isPaid,
-      stripePriceId: input.stripePriceId ?? pack.stripePriceId,
+      stripePriceId: input.stripePriceId !== undefined ? input.stripePriceId : pack.stripePriceId,
       updatedAt: new Date(),
     };
     this.packs.set(id, updated);
@@ -438,6 +454,23 @@ export class MemStorage implements IStorage {
     };
     this.submissions.set(submission.id, submission);
     return submission;
+  }
+
+  async completeSubmission(
+    id: string,
+    data: SubmissionCompletionInput,
+  ): Promise<{ submission?: Submission; newlyCompleted: boolean }> {
+    const existing = this.submissions.get(id);
+    if (!existing) return { newlyCompleted: false };
+    if (existing.completedAt) return { submission: existing, newlyCompleted: false };
+    const submission: Submission = {
+      ...existing,
+      ...data,
+      answers: data.answers as Submission["answers"],
+      completedAt: new Date(),
+    };
+    this.submissions.set(id, submission);
+    return { submission, newlyCompleted: true };
   }
 
   async updateSubmission(id: string, data: SubmissionUpdateInput): Promise<Submission | undefined> {
@@ -696,74 +729,105 @@ export class PgStorage implements IStorage {
   private pool: Pool;
   private ready: Promise<void>;
 
-  constructor(databaseUrl: string) {
-    this.pool = new Pool({ connectionString: databaseUrl });
+  constructor(databaseUrl: string | PoolConfig) {
+    this.pool = typeof databaseUrl === "string"
+      ? new Pool({ connectionString: databaseUrl })
+      : new Pool(databaseUrl);
     this.ready = this.ensureSchema();
   }
 
+  async close(): Promise<void> {
+    await this.pool.end();
+  }
+
+  async healthCheck(): Promise<void> {
+    await this.ready;
+    await this.pool.query("SELECT 1");
+  }
+
   private async ensureSchema() {
-    await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS workspaces (
-        id text PRIMARY KEY,
-        name text NOT NULL,
-        slug text NOT NULL,
-        logo_url text,
-        primary_color text,
-        secondary_color text,
-        created_at timestamptz NOT NULL,
-        updated_at timestamptz NOT NULL
-      );
-    `);
-    await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS packs (
-        id text PRIMARY KEY,
-        workspace_id text NOT NULL,
-        name text NOT NULL,
-        slug text NOT NULL,
-        published_version_id text,
-        is_paid boolean NOT NULL DEFAULT false,
-        stripe_price_id text,
-        views integer NOT NULL DEFAULT 0,
-        created_at timestamptz NOT NULL,
-        updated_at timestamptz NOT NULL
-      );
-    `);
-    await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS pack_versions (
-        id text PRIMARY KEY,
-        pack_id text NOT NULL,
-        version integer NOT NULL,
-        definition jsonb NOT NULL,
-        created_at timestamptz NOT NULL
-      );
-    `);
-    await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS submissions (
-        id text PRIMARY KEY,
-        workspace_id text NOT NULL,
-        pack_id text NOT NULL,
-        pack_version_id text NOT NULL,
-        email text,
-        first_name text,
-        answers jsonb NOT NULL,
-        score integer,
-        outcome_id text,
-        outcome_label text,
-        paid boolean NOT NULL DEFAULT false,
-        amount_paid_cents integer NOT NULL DEFAULT 0,
-        stripe_session_id text,
-        pdf_sent boolean NOT NULL DEFAULT false,
-        completed_at timestamptz,
-        created_at timestamptz NOT NULL
-      );
-    `);
-    await this.pool.query(`ALTER TABLE packs ADD COLUMN IF NOT EXISTS views integer NOT NULL DEFAULT 0;`);
-    await this.pool.query(`ALTER TABLE submissions ADD COLUMN IF NOT EXISTS amount_paid_cents integer NOT NULL DEFAULT 0;`);
-    await this.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS workspaces_slug_unique_idx ON workspaces (slug);`);
-    await this.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS packs_workspace_slug_unique_idx ON packs (workspace_id, slug);`);
-    await this.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS pack_versions_pack_version_unique_idx ON pack_versions (pack_id, version);`);
-    await this.pool.query(`CREATE INDEX IF NOT EXISTS submissions_workspace_id_idx ON submissions (workspace_id);`);
-    await this.pool.query(`CREATE INDEX IF NOT EXISTS submissions_pack_id_idx ON submissions (pack_id);`);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(742001)");
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS app_schema_migrations (
+          version integer PRIMARY KEY,
+          applied_at timestamptz NOT NULL DEFAULT now()
+        );
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS workspaces (
+          id text PRIMARY KEY,
+          name text NOT NULL,
+          slug text NOT NULL,
+          logo_url text,
+          primary_color text,
+          secondary_color text,
+          created_at timestamptz NOT NULL,
+          updated_at timestamptz NOT NULL
+        );
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS packs (
+          id text PRIMARY KEY,
+          workspace_id text NOT NULL,
+          name text NOT NULL,
+          slug text NOT NULL,
+          published_version_id text,
+          is_paid boolean NOT NULL DEFAULT false,
+          stripe_price_id text,
+          views integer NOT NULL DEFAULT 0,
+          created_at timestamptz NOT NULL,
+          updated_at timestamptz NOT NULL
+        );
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS pack_versions (
+          id text PRIMARY KEY,
+          pack_id text NOT NULL,
+          version integer NOT NULL,
+          definition jsonb NOT NULL,
+          created_at timestamptz NOT NULL
+        );
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS submissions (
+          id text PRIMARY KEY,
+          workspace_id text NOT NULL,
+          pack_id text NOT NULL,
+          pack_version_id text NOT NULL,
+          email text,
+          first_name text,
+          answers jsonb NOT NULL,
+          score integer,
+          outcome_id text,
+          outcome_label text,
+          paid boolean NOT NULL DEFAULT false,
+          amount_paid_cents integer NOT NULL DEFAULT 0,
+          stripe_session_id text,
+          pdf_sent boolean NOT NULL DEFAULT false,
+          completed_at timestamptz,
+          created_at timestamptz NOT NULL
+        );
+      `);
+      // Schema version 1 upgrades the columns introduced after the original MVP
+      // without dropping or rewriting existing customer records.
+      await client.query("ALTER TABLE packs ADD COLUMN IF NOT EXISTS views integer NOT NULL DEFAULT 0");
+      await client.query("ALTER TABLE submissions ADD COLUMN IF NOT EXISTS amount_paid_cents integer NOT NULL DEFAULT 0");
+      await client.query("CREATE UNIQUE INDEX IF NOT EXISTS workspaces_slug_unique_idx ON workspaces (slug)");
+      await client.query("CREATE UNIQUE INDEX IF NOT EXISTS packs_workspace_slug_unique_idx ON packs (workspace_id, slug)");
+      await client.query("CREATE UNIQUE INDEX IF NOT EXISTS pack_versions_pack_version_unique_idx ON pack_versions (pack_id, version)");
+      await client.query("CREATE INDEX IF NOT EXISTS submissions_workspace_id_idx ON submissions (workspace_id)");
+      await client.query("CREATE INDEX IF NOT EXISTS submissions_pack_id_idx ON submissions (pack_id)");
+      await client.query("INSERT INTO app_schema_migrations (version) VALUES (1) ON CONFLICT (version) DO NOTHING");
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   private async queryOne<T>(sql: string, values: unknown[] = []) {
@@ -898,9 +962,9 @@ export class PgStorage implements IStorage {
         id,
         input.name ?? existing.name,
         input.slug ?? existing.slug,
-        input.logoUrl ?? existing.logoUrl,
-        input.primaryColor ?? existing.primaryColor,
-        input.secondaryColor ?? existing.secondaryColor,
+        input.logoUrl !== undefined ? input.logoUrl : existing.logoUrl,
+        input.primaryColor !== undefined ? input.primaryColor : existing.primaryColor,
+        input.secondaryColor !== undefined ? input.secondaryColor : existing.secondaryColor,
         new Date(),
       ]);
       return row ? mapWorkspace(row) : undefined;
@@ -1056,7 +1120,7 @@ export class PgStorage implements IStorage {
         input.name ?? existing.name,
         input.slug ?? existing.slug,
         input.isPaid ?? existing.isPaid,
-        input.stripePriceId ?? existing.stripePriceId,
+        input.stripePriceId !== undefined ? input.stripePriceId : existing.stripePriceId,
         new Date(),
       ]);
       return row ? mapPack(row) : undefined;
@@ -1209,6 +1273,58 @@ export class PgStorage implements IStorage {
       submission.createdAt,
     ]);
     return mapSubmission(row!);
+  }
+
+  async completeSubmission(
+    id: string,
+    data: SubmissionCompletionInput,
+  ): Promise<{ submission?: Submission; newlyCompleted: boolean }> {
+    const row = await this.queryOne<SubmissionRow>(`
+      UPDATE submissions
+      SET
+        email = $2,
+        first_name = $3,
+        answers = $4,
+        score = $5,
+        outcome_id = $6,
+        outcome_label = $7,
+        paid = $8,
+        amount_paid_cents = $9,
+        stripe_session_id = $10,
+        completed_at = $11
+      WHERE id = $1 AND completed_at IS NULL
+      RETURNING
+        id,
+        workspace_id AS "workspaceId",
+        pack_id AS "packId",
+        pack_version_id AS "packVersionId",
+        email,
+        first_name AS "firstName",
+        answers,
+        score,
+        outcome_id AS "outcomeId",
+        outcome_label AS "outcomeLabel",
+        paid,
+        amount_paid_cents AS "amountPaidCents",
+        stripe_session_id AS "stripeSessionId",
+        pdf_sent AS "pdfSent",
+        completed_at AS "completedAt",
+        created_at AS "createdAt"
+    `, [
+      id,
+      data.email,
+      data.firstName,
+      data.answers,
+      data.score,
+      data.outcomeId,
+      data.outcomeLabel,
+      data.paid,
+      data.amountPaidCents,
+      data.stripeSessionId,
+      new Date(),
+    ]);
+    if (row) return { submission: mapSubmission(row), newlyCompleted: true };
+    return { submission: await this.getSubmission(id), newlyCompleted: false };
   }
 
   async updateSubmission(id: string, data: SubmissionUpdateInput): Promise<Submission | undefined> {

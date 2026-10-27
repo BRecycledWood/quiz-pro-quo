@@ -20,20 +20,7 @@ import { ArrowLeft, ArrowRight, CheckCircle2, RotateCcw } from "lucide-react";
 const NOT_FOUND = "not_found" as const;
 const UNAVAILABLE = "unavailable" as const;
 const STRIPE_PLACEHOLDER_PRICE = "price_TEST_PLACEHOLDER";
-const RUNNER_STORAGE_KEY = "lastRunnerUrl";
-
-const packStorageKey = (workspaceSlug: string, packSlug: string) =>
-  `packAnswers:${workspaceSlug}:${packSlug}`;
 const downloadFlagKey = (sessionId: string) => `pdfDownloaded:${sessionId}`;
-
-type StoredAnswersPayload = {
-  answers: Answers;
-  encodedAnswersBase64Url: string;
-  createdAt: number;
-  submissionId?: string;
-  email?: string;
-  firstName?: string;
-};
 
 type PublicPackResponse = {
   workspace: {
@@ -61,6 +48,7 @@ type PublicPackResponse = {
   definition: PackDefinition;
   publicAppUrlConfigured: boolean;
   emailConfigured: boolean;
+  stripeConfigured: boolean;
 };
 
 type StatusTone = "pass" | "caution" | "fail";
@@ -148,10 +136,12 @@ function EmailGate({
   onSubmit,
   isSubmitting,
   submitError,
+  isPaidPack,
 }: {
   onSubmit: (email: string, firstName: string) => void;
   isSubmitting: boolean;
   submitError: string | null;
+  isPaidPack: boolean;
 }) {
   const [email, setEmail] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -177,7 +167,9 @@ function EmailGate({
           <p className="text-xs font-semibold tracking-[0.18em] uppercase text-primary">One last step</p>
           <h2 className="text-2xl font-bold">Unlock your results</h2>
           <p className="text-muted-foreground text-sm leading-relaxed">
-            Add your email to save your assessment and see your personalized results. We’ll send a PDF copy when email delivery is enabled.
+            {isPaidPack
+              ? "Add your email to save your assessment and see your result. The full PDF report is available after secure checkout."
+              : "Add your email to save your assessment and see your personalized results. We’ll email a PDF copy if email delivery is enabled."}
           </p>
         </div>
 
@@ -262,7 +254,10 @@ export default function PackRunner() {
   const [showEmailGate, setShowEmailGate] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [paymentReturnLoading, setPaymentReturnLoading] = useState(false);
   const [paymentReturnError, setPaymentReturnError] = useState<string | null>(null);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [paymentAttempt, setPaymentAttempt] = useState(0);
   const [downloadMessage, setDownloadMessage] = useState<string | null>(null);
   const [submittedEmail, setSubmittedEmail] = useState<string | null>(null);
 
@@ -274,6 +269,7 @@ export default function PackRunner() {
     : new URLSearchParams();
   const paidParam = searchParams.get("paid");
   const sessionIdParam = searchParams.get("session_id");
+  const submissionIdParam = searchParams.get("submission_id");
   const answersParam = searchParams.get("answers");
   const autoresParam = searchParams.get("autores");
   const isPreviewMode = searchParams.get("preview") === "1" || autoresParam === "1";
@@ -283,13 +279,6 @@ export default function PackRunner() {
     if (!answersParam) return null;
     return decodeAnswersBase64Url(answersParam);
   }, [answersParam]);
-
-  useEffect(() => {
-    if (!workspaceSlug || !packSlug) return;
-    if (typeof window === "undefined") return;
-    const nextUrl = `/w/${workspaceSlug}/${packSlug}${window.location.search}`;
-    window.localStorage.setItem(RUNNER_STORAGE_KEY, nextUrl);
-  }, [workspaceSlug, packSlug]);
 
   useEffect(() => {
     if (!workspaceSlug || !packSlug) return;
@@ -308,7 +297,9 @@ export default function PackRunner() {
       setResult(null);
       setPendingResult(null);
       setShowEmailGate(false);
+      setPaymentReturnLoading(false);
       setPaymentReturnError(null);
+      setRestoreLoading(false);
       setDownloadMessage(null);
       setCurrentQuestionIndex(0);
       try {
@@ -334,7 +325,9 @@ export default function PackRunner() {
   const pricing = definition?.pricing;
   const isPaidPack = !isPreviewMode && Boolean(pricing?.isPaid);
   const stripePriceId = typeof pricing?.stripePriceId === "string" ? pricing.stripePriceId : "";
-  const stripeConfigured = stripePriceId.trim().length > 0 && stripePriceId !== STRIPE_PLACEHOLDER_PRICE;
+  const stripeConfigured = Boolean(
+    data?.stripeConfigured && stripePriceId.trim().length > 0 && stripePriceId !== STRIPE_PLACEHOLDER_PRICE,
+  );
   const publicAppUrlConfigured = Boolean(data?.publicAppUrlConfigured);
 
   useEffect(() => {
@@ -429,37 +422,6 @@ export default function PackRunner() {
     }
   };
 
-  const downloadPdf = (encoded: string, sessionId: string | null) => {
-    if (!encoded || (isPaidPack && !sessionId)) return;
-    const pdfUrl = `/api/public/w/${workspaceSlug}/${packSlug}/pdf?answers=${encoded}${sessionId ? `&session_id=${encodeURIComponent(sessionId)}` : ""}`;
-    window.location.href = pdfUrl;
-  };
-
-  const postPaidSubmission = async (
-    answersForSubmission: Answers,
-    sessionId: string,
-    stored: StoredAnswersPayload,
-  ) => {
-    if (!stored.submissionId || !stored.email) return;
-    try {
-      const response = await fetch(`/api/public/w/${workspaceSlug}/${packSlug}/submit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          submissionId: stored.submissionId,
-          email: stored.email,
-          firstName: stored.firstName ?? null,
-          answers: answersForSubmission,
-          paid: true,
-          stripeSessionId: sessionId,
-        }),
-      });
-      if (!response.ok) console.warn("[PackRunner] unable to record payment on the submission");
-    } catch (error) {
-      console.warn("[PackRunner] paid submission update failed:", error);
-    }
-  };
-
   const handleSeeResults = () => {
     if (!definition) return;
     const evaluation = evaluatePack(definition, answers);
@@ -469,13 +431,6 @@ export default function PackRunner() {
       setShowEmailGate(false);
       return;
     }
-    const payload: StoredAnswersPayload = {
-      answers,
-      encodedAnswersBase64Url: encodedAnswers,
-      createdAt: Date.now(),
-      submissionId: submissionId ?? undefined,
-    };
-    localStorage.setItem(packStorageKey(workspaceSlug, packSlug), JSON.stringify(payload));
     setPendingResult(evaluation);
     setSubmitError(null);
     setShowEmailGate(true);
@@ -512,19 +467,13 @@ export default function PackRunner() {
       setSubmittedEmail(email);
       setResult(payload.evaluation ?? pendingResult);
       setShowEmailGate(false);
-      localStorage.setItem(packStorageKey(workspaceSlug, packSlug), JSON.stringify({
-        answers,
-        encodedAnswersBase64Url: encodedAnswers,
-        createdAt: Date.now(),
-        submissionId: savedSubmissionId,
-        email,
-        firstName,
-      } satisfies StoredAnswersPayload));
       toast({
         title: "Your results are ready",
-        description: payload.emailConfigured
-          ? `A PDF copy is being sent to ${email}.`
-          : "Your assessment has been saved. Email delivery is not configured on this service.",
+        description: isPaidPack
+          ? "Your assessment is saved. Download the full PDF report after secure checkout."
+          : payload.emailConfigured
+            ? `A PDF copy will be emailed to ${email}.`
+            : "Your assessment has been saved. Email delivery is not configured on this service.",
       });
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "We couldn't save your results. Please try again.");
@@ -534,6 +483,7 @@ export default function PackRunner() {
   };
 
   const handleStartOver = () => {
+    if (typeof window !== "undefined") window.history.replaceState({}, "", window.location.pathname);
     setAnswers({});
     setHasStarted(false);
     setStartError(null);
@@ -551,22 +501,27 @@ export default function PackRunner() {
   };
 
   const handleUnlockPdf = async () => {
-    if (!definition) return;
+    if (!definition || !submissionId) {
+      setCheckoutError("Your saved assessment could not be found. Please take the assessment again.");
+      return;
+    }
     setCheckoutLoading(true);
     setCheckoutError(null);
     try {
       const response = await fetch(`/api/public/w/${workspaceSlug}/${packSlug}/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers }),
+        body: JSON.stringify({ submissionId }),
       });
+      const payload = await response.json().catch(() => ({})) as { url?: string; message?: string };
       if (!response.ok) {
-        const payload = (await response.json()) as { message?: string };
-        setCheckoutError(payload?.message ?? "Unable to start checkout");
+        setCheckoutError(payload.message ?? "Unable to start checkout");
         return;
       }
-      const payload = (await response.json()) as { url?: string };
-      if (!payload.url) { setCheckoutError("Unable to start checkout"); return; }
+      if (!payload.url) {
+        setCheckoutError("Unable to start checkout");
+        return;
+      }
       window.location.href = payload.url;
     } catch {
       setCheckoutError("Unable to start checkout");
@@ -576,34 +531,95 @@ export default function PackRunner() {
   };
 
   useEffect(() => {
-    if (!definition) return;
-    if (!hasPaidSession) return;
-    if (!sessionIdParam) return;
-    const stored = localStorage.getItem(packStorageKey(workspaceSlug, packSlug));
-    if (!stored) { setPaymentReturnError("Payment confirmed, but we couldn't find your answers. Please run again."); return; }
-    try {
-      const payload = JSON.parse(stored) as StoredAnswersPayload;
-      if (!payload?.answers || !payload.encodedAnswersBase64Url) {
-        setPaymentReturnError("Payment confirmed, but we couldn't find your answers. Please run again.");
-        return;
+    if (!definition || !hasPaidSession || !sessionIdParam) return;
+    if (!submissionIdParam) {
+      setPaymentReturnError("Payment return is missing its assessment reference. Please contact support.");
+      return;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    setPaymentReturnLoading(true);
+    setPaymentReturnError(null);
+    fetch(`/api/public/w/${workspaceSlug}/${packSlug}/payment-return?session_id=${encodeURIComponent(sessionIdParam)}&submission_id=${encodeURIComponent(submissionIdParam)}`, {
+      signal: controller.signal,
+    }).then(async (response) => {
+      const payload = await response.json().catch(() => ({})) as {
+        success?: boolean;
+        paid?: boolean;
+        submissionId?: string;
+        email?: string | null;
+        firstName?: string | null;
+        answers?: Answers;
+        evaluation?: ReturnType<typeof evaluatePack>;
+        message?: string;
+      };
+      if (!response.ok || !payload.success || !payload.paid || !payload.submissionId || !payload.answers || !payload.evaluation) {
+        throw new Error(payload.message ?? "Payment could not be verified for this assessment.");
       }
+      if (cancelled) return;
       setAnswers(payload.answers);
       setHasStarted(true);
-      setSubmissionId(payload.submissionId ?? null);
+      setSubmissionId(payload.submissionId);
       setSubmittedEmail(payload.email ?? null);
-      const evaluation = evaluatePack(definition, payload.answers);
-      setResult(evaluation);
-      void postPaidSubmission(payload.answers, sessionIdParam, payload);
+      setResult(payload.evaluation);
       const dlKey = downloadFlagKey(sessionIdParam);
-      if (!localStorage.getItem(dlKey)) {
-        localStorage.setItem(dlKey, "1");
-        downloadPdf(payload.encodedAnswersBase64Url, sessionIdParam);
+      if (!sessionStorage.getItem(dlKey)) {
+        sessionStorage.setItem(dlKey, "1");
+        window.location.href = `/api/public/w/${workspaceSlug}/${packSlug}/pdf?session_id=${encodeURIComponent(sessionIdParam)}&submission_id=${encodeURIComponent(payload.submissionId)}`;
         setDownloadMessage("PDF downloaded.");
       } else {
-        setDownloadMessage("PDF downloaded.");
+        setDownloadMessage("Payment verified. Your report is ready to download.");
       }
-    } catch { setPaymentReturnError("Payment confirmed, but we couldn't find your answers. Please run again."); }
-  }, [definition, hasPaidSession, sessionIdParam, workspaceSlug, packSlug]);
+    }).catch((error: unknown) => {
+      if (cancelled || error instanceof DOMException && error.name === "AbortError") return;
+      setPaymentReturnError(error instanceof Error ? error.message : "Payment could not be verified for this assessment.");
+    }).finally(() => {
+      if (!cancelled) setPaymentReturnLoading(false);
+    });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [definition, hasPaidSession, sessionIdParam, submissionIdParam, workspaceSlug, packSlug, paymentAttempt]);
+
+  useEffect(() => {
+    if (!definition || paidParam !== "0" || !submissionIdParam) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    setRestoreLoading(true);
+    setStartError(null);
+    fetch(`/api/public/w/${workspaceSlug}/${packSlug}/restore?submission_id=${encodeURIComponent(submissionIdParam)}`, {
+      signal: controller.signal,
+    }).then(async (response) => {
+      const payload = await response.json().catch(() => ({})) as {
+        success?: boolean;
+        submissionId?: string;
+        email?: string | null;
+        answers?: Answers;
+        evaluation?: ReturnType<typeof evaluatePack>;
+        message?: string;
+      };
+      if (!response.ok || !payload.success || payload.submissionId !== submissionIdParam || !payload.answers || !payload.evaluation) {
+        throw new Error(payload.message ?? "Your saved assessment could not be restored.");
+      }
+      if (cancelled) return;
+      setAnswers(payload.answers);
+      setSubmissionId(payload.submissionId);
+      setSubmittedEmail(payload.email ?? null);
+      setHasStarted(true);
+      setResult(payload.evaluation);
+      setCheckoutError("Checkout was canceled. Your assessment is saved; you can retry when ready.");
+    }).catch((error: unknown) => {
+      if (cancelled || error instanceof DOMException && error.name === "AbortError") return;
+      setStartError(`Checkout was canceled. ${error instanceof Error ? error.message : "Your assessment could not be restored."}`);
+    }).finally(() => {
+      if (!cancelled) setRestoreLoading(false);
+    });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [definition, paidParam, submissionIdParam, workspaceSlug, packSlug]);
 
   // ── Loading / error states ────────────────────────────────────────────────
 
@@ -639,13 +655,43 @@ export default function PackRunner() {
 
   if (!definition || !data) return null;
 
+  if (restoreLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4 text-center">
+        <div className="space-y-3">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="font-medium">Restoring your saved assessment…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (paymentReturnLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4 text-center">
+        <div className="space-y-3">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="font-medium">Verifying payment securely…</p>
+          <p className="text-sm text-muted-foreground">Your report will unlock as soon as Stripe confirms payment.</p>
+        </div>
+      </div>
+    );
+  }
+
   if (paymentReturnError) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4">
         <div className="max-w-md w-full space-y-4 text-center">
-          <p className="font-semibold">Payment confirmed</p>
+          <p className="font-semibold">We couldn’t verify your payment yet</p>
           <p className="text-sm text-muted-foreground">{paymentReturnError}</p>
-          <Button onClick={handleStartOver}>Start over</Button>
+          <div className="flex flex-col sm:flex-row gap-2 justify-center">
+            <Button onClick={() => {
+              setPaymentReturnError(null);
+              setDownloadMessage(null);
+              setPaymentAttempt((attempt) => attempt + 1);
+            }}>Retry verification</Button>
+            <Button variant="outline" onClick={handleStartOver}>Start over</Button>
+          </div>
         </div>
       </div>
     );
@@ -657,6 +703,7 @@ export default function PackRunner() {
         onSubmit={handleEmailGateSubmit}
         isSubmitting={submitting}
         submitError={submitError}
+        isPaidPack={isPaidPack}
       />
     );
   }
@@ -667,8 +714,11 @@ export default function PackRunner() {
     const outcome = result.outcome;
     const status = getStatusFromOutcome(outcome, result.disqualified);
     const paidSessionId = hasPaidSession ? sessionIdParam : null;
-    const pdfUrl = `/api/public/w/${workspaceSlug}/${packSlug}/pdf?answers=${encodedAnswers}${paidSessionId ? `&session_id=${encodeURIComponent(paidSessionId)}` : ""}`;
-    const unlockDisabled = checkoutLoading || !stripeConfigured || !publicAppUrlConfigured;
+    const paidSubmissionId = submissionId ?? submissionIdParam;
+    const pdfUrl = paidSessionId && paidSubmissionId
+      ? `/api/public/w/${workspaceSlug}/${packSlug}/pdf?session_id=${encodeURIComponent(paidSessionId)}&submission_id=${encodeURIComponent(paidSubmissionId)}`
+      : `/api/public/w/${workspaceSlug}/${packSlug}/pdf?answers=${encodedAnswers}`;
+    const unlockDisabled = checkoutLoading || !stripeConfigured || !publicAppUrlConfigured || !submissionId;
 
     const actionList: Array<{ label: string; url?: string }> = [];
     if (outcome?.ctaLabel) actionList.push({ label: outcome.ctaLabel, url: safeExternalUrl(outcome.ctaUrl) });
@@ -687,9 +737,11 @@ export default function PackRunner() {
 
           {submittedEmail ? (
             <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 text-center">
-              {data.emailConfigured
-                ? <>Your PDF report is being sent to <strong>{submittedEmail}</strong>.</>
-                : <>Your results were saved for <strong>{submittedEmail}</strong>.</>}
+              {isPaidPack
+                ? <>Your assessment is saved for <strong>{submittedEmail}</strong>. The full PDF is available after secure checkout.</>
+                : data.emailConfigured
+                  ? <>A PDF report will be emailed to <strong>{submittedEmail}</strong>.</>
+                  : <>Your results were saved for <strong>{submittedEmail}</strong>.</>}
             </div>
           ) : null}
 
