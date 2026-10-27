@@ -72,5 +72,5 @@ jobs:
       - name: Install Chromium for browser E2E
         run: npx playwright install --with-deps chromium
 
-      - name: Public-flow browser E2E
+      - name: Public-flow and Builder Studio browser E2E
         run: npm run test:e2e

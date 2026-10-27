@@ -75,7 +75,7 @@ function ValueField({
   const value = condition.value;
   if (question && ["boolean", "yesno", "yes_no", "true_false"].includes(question.type)) {
     return (
-      <select className={fieldClass} value={value === true ? "true" : value === false ? "false" : ""} onChange={(event) => onChange(event.target.value === "true")}>
+          <select aria-label="Match value" className={fieldClass} value={value === true ? "true" : value === false ? "false" : ""} onChange={(event) => onChange(event.target.value === "true")}>
         <option value="">Choose an answer</option>
         <option value="true">{question.type === "true_false" ? "True" : "Yes"}</option>
         <option value="false">{question.type === "true_false" ? "False" : "No"}</option>
@@ -84,7 +84,7 @@ function ValueField({
   }
   if (question?.options?.length) {
     return (
-      <select className={fieldClass} value={typeof value === "string" ? value : ""} onChange={(event) => onChange(event.target.value)}>
+      <select aria-label="Match value" className={fieldClass} value={typeof value === "string" ? value : ""} onChange={(event) => onChange(event.target.value)}>
         <option value="">Choose an option</option>
         {question.options.map((option) => {
           const optionValue = option.value ?? option.id;
@@ -140,6 +140,7 @@ function ConditionLeaf({
         <div className="space-y-1.5">
           <Label className="text-[11px] text-muted-foreground">Answer or calculation</Label>
           <select
+            aria-label="Answer or calculation"
             className={fieldClass}
             value={sourceValue}
             onChange={(event) => {
@@ -159,6 +160,7 @@ function ConditionLeaf({
         <div className="space-y-1.5">
           <Label className="text-[11px] text-muted-foreground">Comparison</Label>
           <select
+            aria-label="Comparison"
             className={fieldClass}
             value={condition.operator}
             onChange={(event) => {
