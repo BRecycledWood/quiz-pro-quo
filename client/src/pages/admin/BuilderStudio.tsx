@@ -136,20 +136,26 @@ function isChoice(type: QuestionType) {
   return ["single", "multi", "select", "dropdown"].includes(type);
 }
 
-function questionReferences(questionId: string, definition: PackDefinition): boolean {
+function questionReferenceLabels(questionId: string, definition: PackDefinition): string[] {
+  const labels: string[] = [];
   const groupUses = (group?: ConditionGroup): boolean => {
     if (!group) return false;
     const nodes = [...(group.all ?? []), ...(group.any ?? []), ...(group.not ? [group.not] : [])];
     return nodes.some((node) => "operator" in node ? node.questionId === questionId : groupUses(node));
   };
   const formulaUses = (expression?: FormulaExpression): boolean => Boolean(expression && (expression.op === "answer" && expression.questionId === questionId || expression.args?.some((item) => formulaUses(item))));
-  return (definition.showIf ?? []).some((rule) => rule.questionId !== questionId && groupUses(rule.when)) ||
-    definition.questions.some((question) => question.id !== questionId && groupUses(question.requiredWhen)) ||
-    (definition.disqualifiers ?? []).some((rule) => groupUses(rule.when)) ||
-    (definition.scoring ?? []).some((rule) => groupUses(rule.when) || formulaUses(rule.pointsFormula)) ||
-    (definition.routing ?? []).some((rule) => rule.fromQuestionId !== questionId && rule.targetQuestionId === questionId || rule.fromQuestionId !== questionId && groupUses(rule.when)) ||
-    (definition.reusableConditions ?? []).some((condition) => groupUses(condition.when)) ||
-    (definition.calculations ?? []).some((variable) => formulaUses(variable.expression));
+  if ((definition.showIf ?? []).some((rule) => rule.questionId !== questionId && groupUses(rule.when))) labels.push("visibility rules");
+  if (definition.questions.some((question) => question.id !== questionId && groupUses(question.requiredWhen))) labels.push("required-answer rules");
+  if ((definition.disqualifiers ?? []).some((rule) => groupUses(rule.when))) labels.push("disqualifiers");
+  if ((definition.scoring ?? []).some((rule) => groupUses(rule.when) || formulaUses(rule.pointsFormula))) labels.push("scoring rules");
+  if ((definition.routing ?? []).some((rule) => (rule.fromQuestionId !== questionId && rule.targetQuestionId === questionId) || (rule.fromQuestionId !== questionId && groupUses(rule.when)))) labels.push("routing rules");
+  if ((definition.reusableConditions ?? []).some((condition) => groupUses(condition.when))) labels.push("saved condition templates");
+  if ((definition.calculations ?? []).some((variable) => formulaUses(variable.expression))) labels.push("calculated variables");
+  return labels;
+}
+
+function questionReferences(questionId: string, definition: PackDefinition): boolean {
+  return questionReferenceLabels(questionId, definition).length > 0;
 }
 
 function normalizeDefinitionForSave(definition: PackDefinition, pack: StudioPack): PackDefinition {
@@ -186,7 +192,7 @@ function StructurePanel({
   const questionIndex = (id: string) => definition.questions.findIndex((question) => question.id === id);
   const questionRow = (question: Question) => {
     const index = questionIndex(question.id);
-    const logicCount = (definition.showIf ?? []).filter((rule) => rule.questionId === question.id).length + (question.requiredWhen ? 1 : 0) + (definition.routing ?? []).filter((rule) => rule.fromQuestionId === question.id).length;
+    const logicCount = (definition.showIf ?? []).filter((rule) => rule.questionId === question.id).length + (question.requiredWhen ? 1 : 0) + (definition.routing ?? []).filter((rule) => rule.fromQuestionId === question.id).length + (definition.scoring ?? []).filter((rule) => JSON.stringify(rule.when).includes(question.id) || JSON.stringify(rule.pointsFormula ?? {}).includes(question.id)).length + (definition.disqualifiers ?? []).filter((rule) => JSON.stringify(rule.when).includes(question.id)).length;
     return (
       <div key={question.id} className={`group flex items-center gap-1 rounded-xl border p-1.5 transition ${selectedQuestionId === question.id ? "border-primary/40 bg-primary/[0.06] shadow-sm" : "border-transparent hover:border-border hover:bg-muted/50"}`}>
         <button type="button" onClick={() => onSelectQuestion(question.id)} className="flex min-w-0 flex-1 items-center gap-2.5 px-1.5 py-1 text-left">
@@ -237,12 +243,13 @@ function QuestionEditor({
   if (!question) return <div className="rounded-2xl border border-dashed bg-card p-8 text-center"><FilePlus2 className="mx-auto h-8 w-8 text-muted-foreground" /><h2 className="mt-3 text-lg font-semibold">Select a question</h2><p className="mt-1 text-sm text-muted-foreground">Choose one from the structure panel or add a new question.</p></div>;
   const update = (patch: Partial<Question>) => onChange({ ...definition, questions: definition.questions.map((item) => item.id === question.id ? { ...item, ...patch } : item) });
   const options = question.options ?? [];
-  const isReferenced = questionReferences(question.id, definition);
+  const referenceLabels = questionReferenceLabels(question.id, definition);
+  const isReferenced = referenceLabels.length > 0;
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><Badge variant="secondary" className="mb-2">Question {String(definition.questions.indexOf(question) + 1).padStart(2, "0")}</Badge><h2 className="text-xl font-semibold tracking-tight">Edit question</h2><p className="mt-1 text-xs text-muted-foreground">Write a clear prompt, choose an answer format, and add helpful guidance.</p></div><Button type="button" variant="outline" size="sm" disabled={isReferenced} onClick={onRemove} className="gap-1.5 text-xs text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" />Remove</Button></div>
-      {isReferenced ? <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">This question is referenced by logic or calculations. Remove those references before deleting it so rules do not become invalid.</p> : null}
+      {isReferenced ? <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">This question is used by {referenceLabels.join(", ")}. Remove those references before deleting it so rules do not become invalid.</p> : null}
       <div className="space-y-2"><Label htmlFor="question-prompt">Question prompt</Label><Textarea id="question-prompt" rows={3} maxLength={1000} value={question.prompt} onChange={(event) => update({ prompt: event.target.value })} className="resize-y text-base" placeholder="Ask one clear question…" /><p className="text-right text-[10px] text-muted-foreground">{question.prompt.length}/1,000</p></div>
       <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="question-type">Answer type</Label><select id="question-type" className={inputClass} value={question.type} onChange={(event) => { const type = event.target.value as QuestionType; update({ type, options: isChoice(type) ? question.options?.length ? question.options : [makeDefaultOption(0), makeDefaultOption(1)] : question.options }); }}><optgroup label="Choice">{questionTypes.filter((type) => ["single", "multi", "dropdown"].includes(type.value)).map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</optgroup><optgroup label="Open response">{questionTypes.filter((type) => ["short_text", "long_text", "number", "percent", "date"].includes(type.value)).map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</optgroup><optgroup label="Scales and binary">{questionTypes.filter((type) => ["yesno", "true_false", "scale_1_5", "scale_1_10"].includes(type.value)).map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</optgroup></select><p className="text-[10px] text-muted-foreground">{questionTypes.find((type) => type.value === question.type)?.description}</p></div><div className="space-y-2"><Label htmlFor="question-section">Section</Label><select id="question-section" className={inputClass} value={question.sectionId ?? ""} onChange={(event) => update({ sectionId: event.target.value || undefined, section: undefined })}><option value="">No section</option>{(definition.sections ?? []).map((section) => <option key={section.id} value={section.id}>{section.title}</option>)}</select><p className="text-[10px] text-muted-foreground">Questions keep their order within the assessment.</p></div></div>
       {isChoice(question.type) ? <div className="space-y-3 rounded-xl border bg-slate-50/70 p-4 dark:bg-muted/20"><div className="flex items-center justify-between"><div><p className="text-sm font-semibold">Answer options</p><p className="text-[10px] text-muted-foreground">Use short, distinct labels. Values are stable for logic.</p></div><Button type="button" variant="outline" size="sm" disabled={options.length >= 100} onClick={() => update({ options: [...options, makeDefaultOption(options.length)] })} className="h-8 gap-1.5 text-xs"><Plus className="h-3.5 w-3.5" />Add option</Button></div><div className="space-y-2">{options.map((option, index) => <div key={option.id} className="grid grid-cols-[28px_1fr_1fr_auto] items-center gap-2"><span className="text-center text-[10px] text-muted-foreground">{index + 1}</span><Input aria-label={`Option ${index + 1} label`} value={option.label} onChange={(event) => update({ options: options.map((item) => item.id === option.id ? { ...item, label: event.target.value } : item) })} placeholder="Option label" /><Input aria-label={`Option ${index + 1} value`} value={option.value ?? option.id} onChange={(event) => update({ options: options.map((item) => item.id === option.id ? { ...item, value: event.target.value } : item) })} placeholder="Stable value" className="font-mono text-xs" /><Button type="button" variant="ghost" size="icon" aria-label="Remove option" disabled={options.length <= 1} onClick={() => update({ options: options.filter((item) => item.id !== option.id) })} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></Button></div>)}</div></div> : null}

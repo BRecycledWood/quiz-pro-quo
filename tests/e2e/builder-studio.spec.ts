@@ -55,6 +55,8 @@ test("Builder Studio authors, previews, brands, saves, and publishes without cre
   await expect(assessmentSelect.locator("option", { hasText: packName })).toHaveCount(1);
 
   await expect(page.getByLabel("Question prompt")).toBeVisible();
+  await expect(page.getByText("This question is used by scoring rules.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remove", exact: true })).toBeDisabled();
   await page.getByLabel("Question prompt").fill("Would you like to continue?");
   await page.getByRole("button", { name: "Add question", exact: true }).click();
   await page.getByLabel("Question prompt").fill("What would you like to work on?");
