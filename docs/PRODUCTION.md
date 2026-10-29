@@ -1,114 +1,100 @@
-# QPQ Production Runbook
+# Production Runbook
 
-## Recommended Host
+## Scope and readiness gate
 
-Use Hostinger for the first-user MVP deployment if your existing plan supports Node.js web apps.
+This document describes the deployment configuration; it is not evidence that a provider account or a live integration has been verified. The current automated suite uses mock Stripe and SMTP senders. PostgreSQL and Chromium browser E2E run in GitHub Actions. Before launch, run the end-to-end checklist below against the chosen production-like accounts using Stripe test mode and a controlled mailbox. Do not use live payments or send unsolicited email for acceptance testing.
 
-Why:
+Do not merge or deploy until the PR acceptance criteria pass and the remaining external integrations have been verified with authorized test credentials.
 
-- QPQ is a long-running Node/Express app, not a static site.
-- QPQ needs persistent PostgreSQL.
-- You already have Hostinger available.
-- Hostinger supports GitHub-driven Node.js app deployment on supported plans.
-- QPQ can run as a single Node app with `npm run build` and `npm start`.
-- Use Supabase or Neon for PostgreSQL, because Hostinger Web/Cloud plans do not include Postgres.
+## Required environment
 
-Important: Hostinger is acceptable for a first-user MVP if the Node.js app feature is available on your plan. The database must still be external unless you are using a Hostinger VPS.
+| Variable | Requirement |
+| --- | --- |
+| `NODE_ENV` | `production` |
+| `DATABASE_URL` | PostgreSQL connection string; production startup fails if absent unless the explicit demo-only `ALLOW_MEMORY_STORAGE=true` override is set. Never use that override for customer data. |
+| `ADMIN_KEY` | Random secret, at least 32 characters. Protect it as a credential. |
+| `PUBLIC_APP_URL` | HTTPS origin only, e.g. `https://tryqpq.com`; no path, query, fragment, or credentials. |
+| `TRUST_PROXY_HOPS` | Number of trusted reverse-proxy hops. Set it to the hosting provider's actual topology; Render Blueprint defaults to `1`. |
+| `SEED_DEMO_DATA` | Keep `false` for production unless demo data is intentionally wanted. |
 
-Render, Koyeb, and Railway can also work, but they are blocked right now by subscription or pricing constraints.
+`DATABASE_URL` is required for persistence. The application creates/updates its PostgreSQL schema transactionally on startup under an advisory lock. `npm run db:push` is available after `npm run build` as a one-off schema check/migration command; the same migrations run automatically when the service starts.
 
-## Required Services
+## Optional service configuration
 
-- Node.js host that can run `npm start`
-- PostgreSQL database
-- DNS for `tryqpq.com`
-- Optional: Stripe for paid PDF unlocks
-- Optional: SMTP credentials for emailed PDF reports and lead notifications
+### Stripe (required for paid packs)
 
-## Environment Variables
+Set both:
 
-Required for first-user production:
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
 
-- `NODE_ENV=production`
-- `PUBLIC_APP_URL=https://tryqpq.com`
-- `DATABASE_URL=postgresql://...`
-- `ADMIN_KEY=<long random secret>`
+Configure the webhook endpoint `https://<your-domain>/api/stripe/webhook` for:
 
-Optional:
+- `checkout.session.completed`
+- `checkout.session.async_payment_succeeded`
 
-- `STRIPE_SECRET_KEY=<stripe secret key>`
-- `SMTP_HOST=<smtp host>`
-- `SMTP_PORT=587`
-- `SMTP_SECURE=false`
-- `SMTP_USER=<smtp username>`
-- `SMTP_PASSWORD=<smtp password>`
-- `EMAIL_FROM=<verified sender email>`
-- `LEAD_NOTIFICATION_EMAIL=<internal lead recipient>`
-- `SEED_DEMO_DATA=true` only when intentionally seeding demo data
+Each paid published pack version must reference a Stripe `price_...` Price ID. Checkout is bound to the immutable pack version and saved completed submission; the return/PDF endpoints re-retrieve the Checkout Session and verify its status, metadata, exact price, and submission association. Webhook signature is verified before payment state is stored. Use Stripe test mode for verification; never use a real payment in automated tests.
 
-Do not run first-user production without `DATABASE_URL`. The app now fails fast in production unless `ALLOW_MEMORY_STORAGE=true` is explicitly set for a non-persistent demo.
+### Email (optional)
 
-## Build And Start
+Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, and a verified `EMAIL_FROM`. Set `LEAD_NOTIFICATION_EMAIL` only to an authorized internal recipient; if omitted, notifications go to `EMAIL_FROM`. Free packs can email a PDF after a visitor submits an email. Paid packs do not email the report before payment; the PDF is unlocked for download only after Stripe verifies payment. Internal lead notifications may still be sent. There is no marketing subscription flow.
+
+Email/PDF delivery is asynchronous and does not block result display. This implementation does not include a durable email queue or retry scheduler; monitor SMTP delivery and failed-send logs before relying on email as the only delivery channel.
+
+## Build and deploy
 
 ```bash
-npm install --include=dev
+npm ci --include=dev
+npm run check
+npm test
 npm run build
+npm run db:push   # optional preflight, using the production DATABASE_URL only when authorized
 npm start
 ```
 
-## Render Free Blueprint Deployment
+For the Dockerfile, the runtime stage installs production dependencies and serves the prebuilt `dist` output. Database schema migration also runs on startup. Use an HTTPS reverse proxy/load balancer, configure `TRUST_PROXY_HOPS` correctly, and do not expose admin credentials in frontend code or URLs.
 
-1. Commit and push the repo to GitHub.
-2. In Render, create a new Blueprint from this repo.
-3. Render should detect `render.yaml` at the repo root.
-4. Confirm it will create:
-   - `quiz-pro-quo` web service
-   - `quiz-pro-quo-db` Postgres database
-   - Both should show the `free` plan.
-5. Enter the prompted secret values:
-   - `STRIPE_SECRET_KEY` if paid PDFs are enabled
-   - SMTP variables if emailed reports are enabled
-6. Deploy the Blueprint.
-7. Add the custom domain `tryqpq.com` to the web service.
-8. Create the DNS record Render provides.
-9. Confirm `/healthz` reports `storage: "postgres"` and `publicAppUrlConfigured: true`.
+The repository includes a Render Blueprint (`render.yaml`) as an example, not a verified or endorsed production plan. Before using any provider's free tier, confirm its data-retention, availability, backup, TLS, and resource limits meet the deployment's requirements.
 
-The Blueprint sets `ADMIN_KEY` with `generateValue: true`. After deploy, copy that generated value from Render and store it securely. You need it to access admin API-backed workflows.
+## Health and smoke tests
 
-## Database Setup
-
-The server creates its required Postgres tables and indexes on startup when `DATABASE_URL` is configured.
-
-If you later want to manage schema through Drizzle directly, run:
+After deployment:
 
 ```bash
-npm run db:push
+curl -fsS https://<your-domain>/healthz
+curl -fsSI https://<your-domain>/
 ```
 
-## Smoke Tests
+`/healthz` returns storage type and boolean configuration flags only; it does not expose credentials. For a customer deployment, expect `storage: "postgres"` and `publicAppUrlConfigured: true`. `stripeConfigured` is true only when both Stripe secrets are configured. `emailConfigured` indicates SMTP variables are present, not that a live delivery succeeded.
+
+Automated checks available in this repository:
 
 ```bash
-curl -s https://tryqpq.com/healthz
-curl -I https://tryqpq.com/
+npm run check
+npm test
+npm run build
+npm run test:prod
+npm run test:e2e
+npm audit --audit-level=high
 ```
 
-Expected `/healthz`:
+`npm run test:prod` deliberately opts into memory storage to exercise production startup/static serving without customer data. `npm test` skips the PostgreSQL migration test unless `TEST_DATABASE_URL` points to a disposable database. GitHub Actions supplies a disposable PostgreSQL service and installs Chromium for the browser E2E.
 
-- `ok: true`
-- `storage: "postgres"`
-- `publicAppUrlConfigured: true`
-- `emailConfigured: true` if emailed PDF reports are enabled
+## Controlled pre-launch acceptance checklist
 
-## First Launch Checklist
+- [ ] Configure production-like PostgreSQL, apply the migration, and verify existing data is preserved.
+- [ ] Confirm `/healthz` reports PostgreSQL and the configured HTTPS origin.
+- [ ] Verify admin access with the production `ADMIN_KEY`; confirm unauthorized requests are rejected.
+- [ ] Create/edit/publish a pack, including conditional visibility, scoring, and version pinning.
+- [ ] Complete free public assessment, confirm server-recomputed score and saved lead, and download its PDF.
+- [ ] In Stripe test mode only, complete checkout with a test Price and verify the webhook, return flow, and paid PDF association; also test cancellation/retry.
+- [ ] In an authorized test mailbox, verify result PDF and internal lead notification, then test SMTP failure behavior.
+- [ ] Confirm backups, retention, monitoring, rate-limit behavior behind the configured proxy, and provider recovery procedures.
+- [ ] Review privacy policy, terms, data-retention schedule, consent language, and production domain/DNS/TLS.
 
-- DNS resolves for `tryqpq.com`
-- SSL is active
-- `DATABASE_URL` is configured
-- `ADMIN_KEY` is stored securely
-- `PUBLIC_APP_URL` matches the live domain
-- Admin can load `/admin`
-- A public pack opens at `/w/<workspace>/<pack>`
-- A test submission appears in the admin dashboard
-- PDF download works
-- Email delivery works if SMTP is configured
-- Stripe checkout works if paid packs are enabled
+## Operational limitations to assess
+
+- Rate limiting is process-local; a multi-instance deployment needs a shared rate-limit store or edge protection.
+- Admin access is a single shared key, not per-user authentication or role-based access.
+- Email delivery has no durable queue/retry policy.
+- Automated tests do not establish provider-level service availability, real Stripe account configuration, DNS/email deliverability, backup restoration, or load capacity.

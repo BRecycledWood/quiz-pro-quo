@@ -6,6 +6,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Home from "@/pages/Home";
 import PacksAdmin from "@/pages/admin/PacksAdmin";
+import BuilderStudio from "@/pages/admin/BuilderStudio";
+import Dashboard from "@/pages/admin/Dashboard";
 import QuizList from "@/pages/admin/QuizList";
 import QuizBuilder from "@/pages/admin/QuizBuilder";
 import QuizDashboard from "@/pages/admin/QuizDashboard";
@@ -24,6 +26,8 @@ function Router() {
 
       {/* Admin Routes */}
       <Route path="/admin" component={PacksAdmin} />
+      <Route path="/admin/studio" component={BuilderStudio} />
+      <Route path="/admin/analytics" component={Dashboard} />
       <Route path="/admin/quizzes" component={QuizList} />
       <Route path="/admin/quizzes/compare" component={CompareQuizzes} />
       <Route path="/admin/quizzes/new">

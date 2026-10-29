@@ -274,6 +274,47 @@ function pickRandom<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+export async function seedDemoCatalog(storage: IStorage): Promise<void> {
+  let workspace = await storage.getWorkspaceBySlug("demo");
+  if (!workspace) {
+    workspace = await storage.createWorkspace({
+      name: "Demo Workspace",
+      slug: "demo",
+      primaryColor: "#0f766e",
+      secondaryColor: "#0f172a",
+    });
+  }
+
+  const examples = [
+    { name: "AI Readiness Assessment", slug: "ai-readiness-assessment", definition: aiReadinessDef },
+    { name: "Is Your Business Losing Money From Missed Calls?", slug: "missed-calls-assessment", definition: missedCallsDef },
+    { name: "Property Insurance Pre-Qualification", slug: "insurance-pre-qualification", definition: insurancePrequalDef },
+  ];
+
+  for (const example of examples) {
+    let pack = await storage.getPackBySlug(workspace.id, example.slug);
+    if (!pack) {
+      pack = await storage.createPack({
+        workspaceId: workspace.id,
+        name: example.name,
+        slug: example.slug,
+        isPaid: false,
+      });
+    }
+
+    if (!pack.publishedVersionId) {
+      const versions = await storage.listPackVersions(pack.id);
+      const latest = versions.sort((a, b) => b.version - a.version)[0];
+      const version = latest ?? await storage.createPackVersion({
+        packId: pack.id,
+        version: 1,
+        definition: example.definition,
+      });
+      await storage.publishVersion(pack.id, version.id);
+    }
+  }
+}
+
 export async function seedDemoData(storage: IStorage): Promise<void> {
   try {
     // Find or create demo workspace

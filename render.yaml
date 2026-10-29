@@ -3,12 +3,14 @@ services:
     name: quiz-pro-quo
     runtime: node
     plan: free
-    buildCommand: npm install --include=dev && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /healthz
     envVars:
       - key: NODE_ENV
         value: production
+      - key: TRUST_PROXY_HOPS
+        value: "1"
       - key: PUBLIC_APP_URL
         value: https://tryqpq.com
       - key: DATABASE_URL
@@ -20,6 +22,8 @@ services:
       - key: SEED_DEMO_DATA
         value: "false"
       - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
         sync: false
       - key: SMTP_HOST
         sync: false

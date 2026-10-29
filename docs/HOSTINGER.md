@@ -31,6 +31,7 @@ Add these in Hostinger during deployment or in the app's Environment Variables s
 ```bash
 NODE_ENV=production
 PUBLIC_APP_URL=https://tryqpq.com
+TRUST_PROXY_HOPS=1
 DATABASE_URL=<supabase-or-neon-postgres-connection-string>
 ADMIN_KEY=<long-random-secret>
 SEED_DEMO_DATA=false
@@ -40,6 +41,7 @@ Optional:
 
 ```bash
 STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
 SMTP_HOST=
 SMTP_PORT=587
 SMTP_SECURE=false
@@ -48,6 +50,8 @@ SMTP_PASSWORD=
 EMAIL_FROM=
 LEAD_NOTIFICATION_EMAIL=
 ```
+
+For paid packs, also configure `STRIPE_WEBHOOK_SECRET` and register `https://tryqpq.com/api/stripe/webhook` for `checkout.session.completed` and `checkout.session.async_payment_succeeded`. Use Stripe test mode before launch. Set `TRUST_PROXY_HOPS` to the actual proxy count for your host.
 
 Do not set `ALLOW_MEMORY_STORAGE=true` for first users.
 

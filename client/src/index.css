@@ -1,6 +1,23 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+.assessment-brand {
+  font-family: var(--brand-font, inherit);
+}
+
+.assessment-brand[data-button-style="pill"] button {
+  border-radius: 9999px !important;
+}
+
+.assessment-brand[data-button-style="square"] button {
+  border-radius: 0.35rem !important;
+}
+
+.assessment-brand[data-button-style="rounded"] button {
+  border-radius: 0.9rem;
+}
+
+
 @plugin "tailwindcss-animate";
 
 @custom-variant dark (&:is(.dark *));

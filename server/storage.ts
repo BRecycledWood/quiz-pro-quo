@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
-import { Pool } from "pg";
-import type { PackDefinition } from "@shared/pack";
+import { Pool, type PoolConfig } from "pg";
+import type { BrandPlan, PackBranding, PackDefinition } from "@shared/pack";
 import type { Pack, PackVersion, Submission, Workspace } from "@shared/schema";
 
 export type PackVersionRecord = Omit<PackVersion, "definition"> & {
@@ -13,6 +13,8 @@ export type WorkspaceCreateInput = {
   logoUrl?: string | null;
   primaryColor?: string | null;
   secondaryColor?: string | null;
+  brandSettings?: PackBranding;
+  brandPlan?: BrandPlan;
 };
 
 export type WorkspaceUpdateInput = {
@@ -21,6 +23,8 @@ export type WorkspaceUpdateInput = {
   logoUrl?: string | null;
   primaryColor?: string | null;
   secondaryColor?: string | null;
+  brandSettings?: PackBranding;
+  brandPlan?: BrandPlan;
 };
 
 export type PackCreateInput = {
@@ -55,6 +59,7 @@ export type SubmissionCreateInput = {
   outcomeId?: string | null;
   outcomeLabel?: string | null;
   paid?: boolean;
+  amountPaidCents?: number;
   stripeSessionId?: string | null;
   pdfSent?: boolean;
   completedAt?: Date | null;
@@ -62,32 +67,72 @@ export type SubmissionCreateInput = {
 };
 
 export type SubmissionUpdateInput = {
+  email?: string | null;
+  firstName?: string | null;
+  answers?: Record<string, unknown>;
+  score?: number | null;
+  outcomeId?: string | null;
+  outcomeLabel?: string | null;
   pdfSent?: boolean;
   paid?: boolean;
+  amountPaidCents?: number;
   stripeSessionId?: string | null;
   completedAt?: Date | null;
 };
 
+export type SubmissionCompletionInput = {
+  email: string;
+  firstName: string | null;
+  answers: Record<string, unknown>;
+  score: number;
+  outcomeId: string | null;
+  outcomeLabel: string | null;
+  paid: boolean;
+  amountPaidCents: number;
+  stripeSessionId: string | null;
+};
+
 export type WorkspaceStats = {
+  totalViews: number;
   totalSubmissions: number;
   completedSubmissions: number;
+  totalLeads: number;
   totalRevenue: number;
   avgCompletionRate: number;
+  conversionRate: number;
+  averageScore: number | null;
   submissionsByDay: Array<{ date: string; count: number }>;
   outcomeBreakdown: Array<{ outcomeId: string; label: string; count: number }>;
   quizBreakdown: Array<{
     packId: string;
     packName: string;
     packSlug: string;
+    totalViews: number;
     totalSubmissions: number;
     completedSubmissions: number;
+    totalLeads: number;
     completionRate: number;
+    conversionRate: number;
+    averageScore: number | null;
     totalRevenue: number;
     lastSubmissionAt: string | null;
   }>;
 };
 
+export type PackStats = {
+  totalViews: number;
+  totalSubmissions: number;
+  completedSubmissions: number;
+  totalLeads: number;
+  completionRate: number;
+  conversionRate: number;
+  averageScore: number | null;
+  submissionsByDay: Array<{ date: string; count: number }>;
+  outcomeBreakdown: Array<{ outcomeId: string; label: string; count: number }>;
+};
+
 export interface IStorage {
+  healthCheck(): Promise<void>;
   listWorkspaces(): Promise<Workspace[]>;
   getWorkspace(id: string): Promise<Workspace | undefined>;
   getWorkspaceBySlug(slug: string): Promise<Workspace | undefined>;
@@ -97,6 +142,8 @@ export interface IStorage {
   listPacks(workspaceId: string): Promise<Pack[]>;
   getPack(id: string): Promise<Pack | undefined>;
   getPackBySlug(workspaceId: string, slug: string): Promise<Pack | undefined>;
+  incrementPackViews(packId: string): Promise<void>;
+  getPackStats(packId: string): Promise<PackStats>;
   createPack(input: PackCreateInput): Promise<Pack>;
   updatePack(id: string, input: PackUpdateInput): Promise<Pack | undefined>;
 
@@ -106,6 +153,7 @@ export interface IStorage {
   publishVersion(packId: string, versionId: string): Promise<Pack | undefined>;
 
   createSubmission(input: SubmissionCreateInput): Promise<Submission>;
+  completeSubmission(id: string, data: SubmissionCompletionInput): Promise<{ submission?: Submission; newlyCompleted: boolean }>;
   updateSubmission(id: string, data: SubmissionUpdateInput): Promise<Submission | undefined>;
   getSubmissionsByPack(packId: string): Promise<Submission[]>;
   getSubmissionsByWorkspace(workspaceId: string): Promise<Submission[]>;
@@ -120,69 +168,124 @@ function sortSubmissionsDesc(submissions: Submission[]) {
   );
 }
 
-function buildWorkspaceStats(
-  allSubs: Submission[],
-  packsById: Map<string, Pick<Pack, "id" | "name" | "slug">>,
-): WorkspaceStats {
-  const completed = allSubs.filter((s) => s.completedAt !== null);
-  const paidSubs = allSubs.filter((s) => s.paid);
-  const totalRevenue = paidSubs.length * 49;
+function percent(numerator: number, denominator: number) {
+  return denominator > 0 ? Math.round((numerator / denominator) * 100) : 0;
+}
 
-  const dayMap = new Map<string, number>();
-  const now = new Date();
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    dayMap.set(d.toISOString().slice(0, 10), 0);
-  }
-  allSubs.forEach((s) => {
-    const key = new Date(s.createdAt).toISOString().slice(0, 10);
-    if (dayMap.has(key)) dayMap.set(key, (dayMap.get(key) ?? 0) + 1);
-  });
-  const submissionsByDay = Array.from(dayMap.entries()).map(([date, count]) => ({ date, count }));
+function averageScore(submissions: Submission[]) {
+  const scores = submissions
+    .filter((submission) => submission.completedAt !== null && typeof submission.score === "number")
+    .map((submission) => submission.score as number);
+  return scores.length > 0
+    ? Math.round((scores.reduce((sum, score) => sum + score, 0) / scores.length) * 10) / 10
+    : null;
+}
 
+function buildOutcomeBreakdown(submissions: Submission[]) {
   const outcomeMap = new Map<string, { label: string; count: number }>();
-  allSubs.forEach((s) => {
-    if (!s.outcomeId || !s.outcomeLabel) return;
-    const existing = outcomeMap.get(s.outcomeId);
-    if (existing) {
-      existing.count++;
-    } else {
-      outcomeMap.set(s.outcomeId, { label: s.outcomeLabel, count: 1 });
-    }
+  submissions.forEach((submission) => {
+    if (!submission.completedAt || !submission.outcomeId || !submission.outcomeLabel) return;
+    const existing = outcomeMap.get(submission.outcomeId);
+    if (existing) existing.count += 1;
+    else outcomeMap.set(submission.outcomeId, { label: submission.outcomeLabel, count: 1 });
   });
-  const outcomeBreakdown = Array.from(outcomeMap.entries()).map(([outcomeId, { label, count }]) => ({
+
+  return Array.from(outcomeMap.entries()).map(([outcomeId, { label, count }]) => ({
     outcomeId,
     label,
     count,
   }));
+}
 
-  const packIds = Array.from(new Set(allSubs.map((s) => s.packId)));
+function buildPackStats(submissions: Submission[], totalViews: number): PackStats {
+  const completed = submissions.filter((submission) => submission.completedAt !== null);
+  const totalLeads = completed.filter((submission) => Boolean(submission.email)).length;
+  const dayMap = new Map<string, number>();
+  const now = new Date();
+  for (let i = 29; i >= 0; i--) {
+    const day = new Date(now);
+    day.setDate(day.getDate() - i);
+    dayMap.set(day.toISOString().slice(0, 10), 0);
+  }
+  completed.forEach((submission) => {
+    const date = new Date(submission.completedAt ?? submission.createdAt).toISOString().slice(0, 10);
+    if (dayMap.has(date)) dayMap.set(date, (dayMap.get(date) ?? 0) + 1);
+  });
+
+  return {
+    totalViews,
+    totalSubmissions: submissions.length,
+    completedSubmissions: completed.length,
+    totalLeads,
+    completionRate: percent(completed.length, submissions.length),
+    conversionRate: percent(totalLeads, totalViews),
+    averageScore: averageScore(completed),
+    submissionsByDay: Array.from(dayMap.entries()).map(([date, count]) => ({ date, count })),
+    outcomeBreakdown: buildOutcomeBreakdown(completed),
+  };
+}
+
+function buildWorkspaceStats(
+  allSubs: Submission[],
+  packsById: Map<string, Pick<Pack, "id" | "name" | "slug" | "views">>,
+): WorkspaceStats {
+  const completed = allSubs.filter((submission) => submission.completedAt !== null);
+  const totalViews = Array.from(packsById.values()).reduce((sum, pack) => sum + (pack.views ?? 0), 0);
+  const totalLeads = completed.filter((submission) => Boolean(submission.email)).length;
+  const totalRevenue = allSubs.reduce(
+    (sum, submission) => sum + (submission.paid ? (submission.amountPaidCents ?? 0) : 0),
+    0,
+  ) / 100;
+
+  const dayMap = new Map<string, number>();
+  const now = new Date();
+  for (let i = 29; i >= 0; i--) {
+    const day = new Date(now);
+    day.setDate(day.getDate() - i);
+    dayMap.set(day.toISOString().slice(0, 10), 0);
+  }
+  completed.forEach((submission) => {
+    const date = new Date(submission.completedAt ?? submission.createdAt).toISOString().slice(0, 10);
+    if (dayMap.has(date)) dayMap.set(date, (dayMap.get(date) ?? 0) + 1);
+  });
+
+  const packIds = Array.from(new Set([
+    ...packsById.keys(),
+    ...allSubs.map((submission) => submission.packId),
+  ]));
   const quizBreakdown = packIds.map((packId) => {
     const pack = packsById.get(packId);
-    const packSubs = allSubs.filter((s) => s.packId === packId);
-    const packCompleted = packSubs.filter((s) => s.completedAt !== null);
-    const packPaid = packSubs.filter((s) => s.paid);
+    const packSubs = allSubs.filter((submission) => submission.packId === packId);
+    const packStats = buildPackStats(packSubs, pack?.views ?? 0);
+    const paidSubs = packSubs.filter((submission) => submission.paid);
     const sorted = sortSubmissionsDesc(packSubs);
     return {
       packId,
       packName: pack?.name ?? packId,
       packSlug: pack?.slug ?? packId,
-      totalSubmissions: packSubs.length,
-      completedSubmissions: packCompleted.length,
-      completionRate: packSubs.length > 0 ? Math.round((packCompleted.length / packSubs.length) * 100) : 0,
-      totalRevenue: packPaid.length * 49,
+      totalViews: packStats.totalViews,
+      totalSubmissions: packStats.totalSubmissions,
+      completedSubmissions: packStats.completedSubmissions,
+      totalLeads: packStats.totalLeads,
+      completionRate: packStats.completionRate,
+      conversionRate: packStats.conversionRate,
+      averageScore: packStats.averageScore,
+      totalRevenue: paidSubs.reduce((sum, submission) => sum + (submission.amountPaidCents ?? 0), 0) / 100,
       lastSubmissionAt: sorted[0]?.createdAt ? new Date(sorted[0].createdAt).toISOString() : null,
     };
   });
 
   return {
+    totalViews,
     totalSubmissions: allSubs.length,
     completedSubmissions: completed.length,
+    totalLeads,
     totalRevenue,
-    avgCompletionRate: allSubs.length > 0 ? Math.round((completed.length / allSubs.length) * 100) : 0,
-    submissionsByDay,
-    outcomeBreakdown,
+    avgCompletionRate: percent(completed.length, allSubs.length),
+    conversionRate: percent(totalLeads, totalViews),
+    averageScore: averageScore(completed),
+    submissionsByDay: Array.from(dayMap.entries()).map(([date, count]) => ({ date, count })),
+    outcomeBreakdown: buildOutcomeBreakdown(completed),
     quizBreakdown,
   };
 }
@@ -200,6 +303,8 @@ export class MemStorage implements IStorage {
     this.submissions = new Map();
     this.seed();
   }
+
+  async healthCheck(): Promise<void> {}
 
   async listWorkspaces(): Promise<Workspace[]> {
     return Array.from(this.workspaces.values());
@@ -238,9 +343,11 @@ export class MemStorage implements IStorage {
       ...workspace,
       name: input.name ?? workspace.name,
       slug: input.slug ?? workspace.slug,
-      logoUrl: input.logoUrl ?? workspace.logoUrl,
-      primaryColor: input.primaryColor ?? workspace.primaryColor,
-      secondaryColor: input.secondaryColor ?? workspace.secondaryColor,
+      logoUrl: input.logoUrl !== undefined ? input.logoUrl : workspace.logoUrl,
+      primaryColor: input.primaryColor !== undefined ? input.primaryColor : workspace.primaryColor,
+      secondaryColor: input.secondaryColor !== undefined ? input.secondaryColor : workspace.secondaryColor,
+      brandSettings: input.brandSettings ?? workspace.brandSettings,
+      brandPlan: input.brandPlan ?? workspace.brandPlan,
       updatedAt: new Date(),
     };
     this.workspaces.set(id, updated);
@@ -261,6 +368,17 @@ export class MemStorage implements IStorage {
     return Array.from(this.packs.values()).find(
       (pack) => pack.workspaceId === workspaceId && pack.slug === slug,
     );
+  }
+
+  async incrementPackViews(packId: string): Promise<void> {
+    const pack = this.packs.get(packId);
+    if (pack) this.packs.set(packId, { ...pack, views: (pack.views ?? 0) + 1 });
+  }
+
+  async getPackStats(packId: string): Promise<PackStats> {
+    const pack = this.packs.get(packId);
+    const submissions = await this.getSubmissionsByPack(packId);
+    return buildPackStats(submissions, pack?.views ?? 0);
   }
 
   async createPack(input: PackCreateInput): Promise<Pack> {
@@ -285,7 +403,7 @@ export class MemStorage implements IStorage {
       name: input.name ?? pack.name,
       slug: input.slug ?? pack.slug,
       isPaid: input.isPaid ?? pack.isPaid,
-      stripePriceId: input.stripePriceId ?? pack.stripePriceId,
+      stripePriceId: input.stripePriceId !== undefined ? input.stripePriceId : pack.stripePriceId,
       updatedAt: new Date(),
     };
     this.packs.set(id, updated);
@@ -334,6 +452,7 @@ export class MemStorage implements IStorage {
       outcomeId: input.outcomeId ?? null,
       outcomeLabel: input.outcomeLabel ?? null,
       paid: input.paid ?? false,
+      amountPaidCents: input.amountPaidCents ?? 0,
       stripeSessionId: input.stripeSessionId ?? null,
       pdfSent: input.pdfSent ?? false,
       completedAt: input.completedAt ?? null,
@@ -343,13 +462,37 @@ export class MemStorage implements IStorage {
     return submission;
   }
 
+  async completeSubmission(
+    id: string,
+    data: SubmissionCompletionInput,
+  ): Promise<{ submission?: Submission; newlyCompleted: boolean }> {
+    const existing = this.submissions.get(id);
+    if (!existing) return { newlyCompleted: false };
+    if (existing.completedAt) return { submission: existing, newlyCompleted: false };
+    const submission: Submission = {
+      ...existing,
+      ...data,
+      answers: data.answers as Submission["answers"],
+      completedAt: new Date(),
+    };
+    this.submissions.set(id, submission);
+    return { submission, newlyCompleted: true };
+  }
+
   async updateSubmission(id: string, data: SubmissionUpdateInput): Promise<Submission | undefined> {
     const sub = this.submissions.get(id);
     if (!sub) return undefined;
     const updated: Submission = {
       ...sub,
+      email: data.email !== undefined ? data.email : sub.email,
+      firstName: data.firstName !== undefined ? data.firstName : sub.firstName,
+      answers: data.answers !== undefined ? data.answers as Submission["answers"] : sub.answers,
+      score: data.score !== undefined ? data.score : sub.score,
+      outcomeId: data.outcomeId !== undefined ? data.outcomeId : sub.outcomeId,
+      outcomeLabel: data.outcomeLabel !== undefined ? data.outcomeLabel : sub.outcomeLabel,
       pdfSent: data.pdfSent ?? sub.pdfSent,
       paid: data.paid ?? sub.paid,
+      amountPaidCents: data.amountPaidCents ?? sub.amountPaidCents,
       stripeSessionId: data.stripeSessionId !== undefined ? data.stripeSessionId : sub.stripeSessionId,
       completedAt: data.completedAt !== undefined ? data.completedAt : sub.completedAt,
     };
@@ -382,7 +525,9 @@ export class MemStorage implements IStorage {
   async getWorkspaceStats(workspaceId: string): Promise<WorkspaceStats> {
     const allSubs = Array.from(this.submissions.values()).filter((s) => s.workspaceId === workspaceId);
     const packsById = new Map(
-      Array.from(this.packs.values()).map((pack) => [pack.id, pack] as const),
+      Array.from(this.packs.values())
+        .filter((pack) => pack.workspaceId === workspaceId)
+        .map((pack) => [pack.id, pack] as const),
     );
     return buildWorkspaceStats(allSubs, packsById);
   }
@@ -396,6 +541,8 @@ export class MemStorage implements IStorage {
       logoUrl: input.logoUrl ?? null,
       primaryColor: input.primaryColor ?? null,
       secondaryColor: input.secondaryColor ?? null,
+      brandSettings: input.brandSettings ?? {},
+      brandPlan: input.brandPlan ?? "free",
       createdAt: now,
       updatedAt: now,
     };
@@ -413,6 +560,7 @@ export class MemStorage implements IStorage {
       publishedVersionId: null,
       isPaid: input.isPaid ?? false,
       stripePriceId: input.stripePriceId ?? null,
+      views: 0,
       createdAt: now,
       updatedAt: now,
     };
@@ -440,6 +588,7 @@ export class MemStorage implements IStorage {
       logoUrl: "https://placehold.co/120x120",
       primaryColor: "#0f766e",
       secondaryColor: "#0f172a",
+      brandPlan: "legacy",
     });
 
     this.addWorkspace({
@@ -448,6 +597,7 @@ export class MemStorage implements IStorage {
       logoUrl: "https://placehold.co/120x120",
       primaryColor: "#0f4c81",
       secondaryColor: "#f97316",
+      brandPlan: "legacy",
     });
 
     const insurancePack = this.addPack({
@@ -521,6 +671,8 @@ type WorkspaceRow = {
   logoUrl: string | null;
   primaryColor: string | null;
   secondaryColor: string | null;
+  brandSettings: PackBranding;
+  brandPlan: BrandPlan;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -533,6 +685,7 @@ type PackRow = {
   publishedVersionId: string | null;
   isPaid: boolean;
   stripePriceId: string | null;
+  views: number;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -557,6 +710,7 @@ type SubmissionRow = {
   outcomeId: string | null;
   outcomeLabel: string | null;
   paid: boolean;
+  amountPaidCents: number;
   stripeSessionId: string | null;
   pdfSent: boolean;
   completedAt: Date | null;
@@ -587,70 +741,112 @@ export class PgStorage implements IStorage {
   private pool: Pool;
   private ready: Promise<void>;
 
-  constructor(databaseUrl: string) {
-    this.pool = new Pool({ connectionString: databaseUrl });
+  constructor(databaseUrl: string | PoolConfig) {
+    this.pool = typeof databaseUrl === "string"
+      ? new Pool({ connectionString: databaseUrl })
+      : new Pool(databaseUrl);
     this.ready = this.ensureSchema();
   }
 
+  async close(): Promise<void> {
+    await this.pool.end();
+  }
+
+  async healthCheck(): Promise<void> {
+    await this.ready;
+    await this.pool.query("SELECT 1");
+  }
+
   private async ensureSchema() {
-    await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS workspaces (
-        id text PRIMARY KEY,
-        name text NOT NULL,
-        slug text NOT NULL,
-        logo_url text,
-        primary_color text,
-        secondary_color text,
-        created_at timestamptz NOT NULL,
-        updated_at timestamptz NOT NULL
-      );
-    `);
-    await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS packs (
-        id text PRIMARY KEY,
-        workspace_id text NOT NULL,
-        name text NOT NULL,
-        slug text NOT NULL,
-        published_version_id text,
-        is_paid boolean NOT NULL DEFAULT false,
-        stripe_price_id text,
-        created_at timestamptz NOT NULL,
-        updated_at timestamptz NOT NULL
-      );
-    `);
-    await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS pack_versions (
-        id text PRIMARY KEY,
-        pack_id text NOT NULL,
-        version integer NOT NULL,
-        definition jsonb NOT NULL,
-        created_at timestamptz NOT NULL
-      );
-    `);
-    await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS submissions (
-        id text PRIMARY KEY,
-        workspace_id text NOT NULL,
-        pack_id text NOT NULL,
-        pack_version_id text NOT NULL,
-        email text,
-        first_name text,
-        answers jsonb NOT NULL,
-        score integer,
-        outcome_id text,
-        outcome_label text,
-        paid boolean NOT NULL DEFAULT false,
-        stripe_session_id text,
-        pdf_sent boolean NOT NULL DEFAULT false,
-        completed_at timestamptz,
-        created_at timestamptz NOT NULL
-      );
-    `);
-    await this.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS workspaces_slug_unique_idx ON workspaces (slug);`);
-    await this.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS packs_workspace_slug_unique_idx ON packs (workspace_id, slug);`);
-    await this.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS pack_versions_pack_version_unique_idx ON pack_versions (pack_id, version);`);
-    await this.pool.query(`CREATE INDEX IF NOT EXISTS submissions_workspace_id_idx ON submissions (workspace_id);`);
-    await this.pool.query(`CREATE INDEX IF NOT EXISTS submissions_pack_id_idx ON submissions (pack_id);`);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(742001)");
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS app_schema_migrations (
+          version integer PRIMARY KEY,
+          applied_at timestamptz NOT NULL DEFAULT now()
+        );
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS workspaces (
+          id text PRIMARY KEY,
+          name text NOT NULL,
+          slug text NOT NULL,
+          logo_url text,
+          primary_color text,
+          secondary_color text,
+          brand_settings jsonb NOT NULL DEFAULT '{}'::jsonb,
+          brand_plan text NOT NULL DEFAULT 'free',
+          created_at timestamptz NOT NULL,
+          updated_at timestamptz NOT NULL
+        );
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS packs (
+          id text PRIMARY KEY,
+          workspace_id text NOT NULL,
+          name text NOT NULL,
+          slug text NOT NULL,
+          published_version_id text,
+          is_paid boolean NOT NULL DEFAULT false,
+          stripe_price_id text,
+          views integer NOT NULL DEFAULT 0,
+          created_at timestamptz NOT NULL,
+          updated_at timestamptz NOT NULL
+        );
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS pack_versions (
+          id text PRIMARY KEY,
+          pack_id text NOT NULL,
+          version integer NOT NULL,
+          definition jsonb NOT NULL,
+          created_at timestamptz NOT NULL
+        );
+      `);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS submissions (
+          id text PRIMARY KEY,
+          workspace_id text NOT NULL,
+          pack_id text NOT NULL,
+          pack_version_id text NOT NULL,
+          email text,
+          first_name text,
+          answers jsonb NOT NULL,
+          score integer,
+          outcome_id text,
+          outcome_label text,
+          paid boolean NOT NULL DEFAULT false,
+          amount_paid_cents integer NOT NULL DEFAULT 0,
+          stripe_session_id text,
+          pdf_sent boolean NOT NULL DEFAULT false,
+          completed_at timestamptz,
+          created_at timestamptz NOT NULL
+        );
+      `);
+      // Schema version 1 upgrades the columns introduced after the original MVP
+      // without dropping or rewriting existing customer records.
+      await client.query("ALTER TABLE packs ADD COLUMN IF NOT EXISTS views integer NOT NULL DEFAULT 0");
+      await client.query("ALTER TABLE submissions ADD COLUMN IF NOT EXISTS amount_paid_cents integer NOT NULL DEFAULT 0");
+      await client.query("CREATE UNIQUE INDEX IF NOT EXISTS workspaces_slug_unique_idx ON workspaces (slug)");
+      await client.query("CREATE UNIQUE INDEX IF NOT EXISTS packs_workspace_slug_unique_idx ON packs (workspace_id, slug)");
+      await client.query("CREATE UNIQUE INDEX IF NOT EXISTS pack_versions_pack_version_unique_idx ON pack_versions (pack_id, version)");
+      await client.query("CREATE INDEX IF NOT EXISTS submissions_workspace_id_idx ON submissions (workspace_id)");
+      await client.query("CREATE INDEX IF NOT EXISTS submissions_pack_id_idx ON submissions (pack_id)");
+      await client.query("INSERT INTO app_schema_migrations (version) VALUES (1) ON CONFLICT (version) DO NOTHING");
+      // Existing workspaces are grandfathered so the additive branding tier does not remove prior capabilities.
+      await client.query("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS brand_plan text NOT NULL DEFAULT 'legacy'");
+      await client.query("INSERT INTO app_schema_migrations (version) VALUES (2) ON CONFLICT (version) DO NOTHING");
+      await client.query("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS brand_settings jsonb NOT NULL DEFAULT '{}'::jsonb");
+      await client.query("INSERT INTO app_schema_migrations (version) VALUES (3) ON CONFLICT (version) DO NOTHING");
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   private async queryOne<T>(sql: string, values: unknown[] = []) {
@@ -674,6 +870,8 @@ export class PgStorage implements IStorage {
         logo_url AS "logoUrl",
         primary_color AS "primaryColor",
         secondary_color AS "secondaryColor",
+        brand_settings AS "brandSettings",
+        brand_plan AS "brandPlan",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM workspaces
@@ -691,6 +889,8 @@ export class PgStorage implements IStorage {
         logo_url AS "logoUrl",
         primary_color AS "primaryColor",
         secondary_color AS "secondaryColor",
+        brand_settings AS "brandSettings",
+        brand_plan AS "brandPlan",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM workspaces
@@ -708,6 +908,8 @@ export class PgStorage implements IStorage {
         logo_url AS "logoUrl",
         primary_color AS "primaryColor",
         secondary_color AS "secondaryColor",
+        brand_settings AS "brandSettings",
+        brand_plan AS "brandPlan",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM workspaces
@@ -724,14 +926,16 @@ export class PgStorage implements IStorage {
       logoUrl: input.logoUrl ?? null,
       primaryColor: input.primaryColor ?? null,
       secondaryColor: input.secondaryColor ?? null,
+      brandSettings: input.brandSettings ?? {},
+      brandPlan: input.brandPlan ?? "free",
       createdAt: new Date(),
       updatedAt: new Date(),
     };
     try {
       const row = await this.queryOne<WorkspaceRow>(`
         INSERT INTO workspaces (
-          id, name, slug, logo_url, primary_color, secondary_color, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          id, name, slug, logo_url, primary_color, secondary_color, brand_settings, brand_plan, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING
           id,
           name,
@@ -739,6 +943,8 @@ export class PgStorage implements IStorage {
           logo_url AS "logoUrl",
           primary_color AS "primaryColor",
           secondary_color AS "secondaryColor",
+          brand_settings AS "brandSettings",
+          brand_plan AS "brandPlan",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
       `, [
@@ -748,6 +954,8 @@ export class PgStorage implements IStorage {
         workspace.logoUrl,
         workspace.primaryColor,
         workspace.secondaryColor,
+        workspace.brandSettings,
+        workspace.brandPlan,
         workspace.createdAt,
         workspace.updatedAt,
       ]);
@@ -770,7 +978,9 @@ export class PgStorage implements IStorage {
           logo_url = $4,
           primary_color = $5,
           secondary_color = $6,
-          updated_at = $7
+          brand_settings = $7,
+          brand_plan = $8,
+          updated_at = $9
         WHERE id = $1
         RETURNING
           id,
@@ -779,15 +989,19 @@ export class PgStorage implements IStorage {
           logo_url AS "logoUrl",
           primary_color AS "primaryColor",
           secondary_color AS "secondaryColor",
+          brand_settings AS "brandSettings",
+          brand_plan AS "brandPlan",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
       `, [
         id,
         input.name ?? existing.name,
         input.slug ?? existing.slug,
-        input.logoUrl ?? existing.logoUrl,
-        input.primaryColor ?? existing.primaryColor,
-        input.secondaryColor ?? existing.secondaryColor,
+        input.logoUrl !== undefined ? input.logoUrl : existing.logoUrl,
+        input.primaryColor !== undefined ? input.primaryColor : existing.primaryColor,
+        input.secondaryColor !== undefined ? input.secondaryColor : existing.secondaryColor,
+        input.brandSettings ?? existing.brandSettings,
+        input.brandPlan ?? existing.brandPlan,
         new Date(),
       ]);
       return row ? mapWorkspace(row) : undefined;
@@ -807,6 +1021,7 @@ export class PgStorage implements IStorage {
         published_version_id AS "publishedVersionId",
         is_paid AS "isPaid",
         stripe_price_id AS "stripePriceId",
+        views,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM packs
@@ -826,6 +1041,7 @@ export class PgStorage implements IStorage {
         published_version_id AS "publishedVersionId",
         is_paid AS "isPaid",
         stripe_price_id AS "stripePriceId",
+        views,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM packs
@@ -844,12 +1060,25 @@ export class PgStorage implements IStorage {
         published_version_id AS "publishedVersionId",
         is_paid AS "isPaid",
         stripe_price_id AS "stripePriceId",
+        views,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM packs
       WHERE workspace_id = $1 AND slug = $2
     `, [workspaceId, slug]);
     return row ? mapPack(row) : undefined;
+  }
+
+  async incrementPackViews(packId: string): Promise<void> {
+    await this.queryOne(`UPDATE packs SET views = views + 1 WHERE id = $1 RETURNING id`, [packId]);
+  }
+
+  async getPackStats(packId: string): Promise<PackStats> {
+    const [pack, submissions] = await Promise.all([
+      this.getPack(packId),
+      this.getSubmissionsByPack(packId),
+    ]);
+    return buildPackStats(submissions, pack?.views ?? 0);
   }
 
   async createPack(input: PackCreateInput): Promise<Pack> {
@@ -861,6 +1090,7 @@ export class PgStorage implements IStorage {
       publishedVersionId: null,
       isPaid: input.isPaid ?? false,
       stripePriceId: input.stripePriceId ?? null,
+      views: 0,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -877,6 +1107,7 @@ export class PgStorage implements IStorage {
           published_version_id AS "publishedVersionId",
           is_paid AS "isPaid",
           stripe_price_id AS "stripePriceId",
+          views,
           created_at AS "createdAt",
           updated_at AS "updatedAt"
       `, [
@@ -918,6 +1149,7 @@ export class PgStorage implements IStorage {
           published_version_id AS "publishedVersionId",
           is_paid AS "isPaid",
           stripe_price_id AS "stripePriceId",
+          views,
           created_at AS "createdAt",
           updated_at AS "updatedAt"
       `, [
@@ -925,7 +1157,7 @@ export class PgStorage implements IStorage {
         input.name ?? existing.name,
         input.slug ?? existing.slug,
         input.isPaid ?? existing.isPaid,
-        input.stripePriceId ?? existing.stripePriceId,
+        input.stripePriceId !== undefined ? input.stripePriceId : existing.stripePriceId,
         new Date(),
       ]);
       return row ? mapPack(row) : undefined;
@@ -1000,7 +1232,9 @@ export class PgStorage implements IStorage {
     const row = await this.queryOne<PackRow>(`
       UPDATE packs
       SET published_version_id = $2, updated_at = $3
-      WHERE id = $1
+      WHERE id = $1 AND EXISTS (
+        SELECT 1 FROM pack_versions WHERE id = $2 AND pack_id = $1
+      )
       RETURNING
         id,
         workspace_id AS "workspaceId",
@@ -1009,6 +1243,7 @@ export class PgStorage implements IStorage {
         published_version_id AS "publishedVersionId",
         is_paid AS "isPaid",
         stripe_price_id AS "stripePriceId",
+        views,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
     `, [packId, versionId, new Date()]);
@@ -1028,6 +1263,7 @@ export class PgStorage implements IStorage {
       outcomeId: input.outcomeId ?? null,
       outcomeLabel: input.outcomeLabel ?? null,
       paid: input.paid ?? false,
+      amountPaidCents: input.amountPaidCents ?? 0,
       stripeSessionId: input.stripeSessionId ?? null,
       pdfSent: input.pdfSent ?? false,
       completedAt: input.completedAt ?? null,
@@ -1036,8 +1272,8 @@ export class PgStorage implements IStorage {
     const row = await this.queryOne<SubmissionRow>(`
       INSERT INTO submissions (
         id, workspace_id, pack_id, pack_version_id, email, first_name, answers, score,
-        outcome_id, outcome_label, paid, stripe_session_id, pdf_sent, completed_at, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        outcome_id, outcome_label, paid, amount_paid_cents, stripe_session_id, pdf_sent, completed_at, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING
         id,
         workspace_id AS "workspaceId",
@@ -1050,6 +1286,7 @@ export class PgStorage implements IStorage {
         outcome_id AS "outcomeId",
         outcome_label AS "outcomeLabel",
         paid,
+        amount_paid_cents AS "amountPaidCents",
         stripe_session_id AS "stripeSessionId",
         pdf_sent AS "pdfSent",
         completed_at AS "completedAt",
@@ -1066,6 +1303,7 @@ export class PgStorage implements IStorage {
       submission.outcomeId,
       submission.outcomeLabel,
       submission.paid,
+      submission.amountPaidCents,
       submission.stripeSessionId,
       submission.pdfSent,
       submission.completedAt,
@@ -1074,16 +1312,75 @@ export class PgStorage implements IStorage {
     return mapSubmission(row!);
   }
 
+  async completeSubmission(
+    id: string,
+    data: SubmissionCompletionInput,
+  ): Promise<{ submission?: Submission; newlyCompleted: boolean }> {
+    const row = await this.queryOne<SubmissionRow>(`
+      UPDATE submissions
+      SET
+        email = $2,
+        first_name = $3,
+        answers = $4,
+        score = $5,
+        outcome_id = $6,
+        outcome_label = $7,
+        paid = $8,
+        amount_paid_cents = $9,
+        stripe_session_id = $10,
+        completed_at = $11
+      WHERE id = $1 AND completed_at IS NULL
+      RETURNING
+        id,
+        workspace_id AS "workspaceId",
+        pack_id AS "packId",
+        pack_version_id AS "packVersionId",
+        email,
+        first_name AS "firstName",
+        answers,
+        score,
+        outcome_id AS "outcomeId",
+        outcome_label AS "outcomeLabel",
+        paid,
+        amount_paid_cents AS "amountPaidCents",
+        stripe_session_id AS "stripeSessionId",
+        pdf_sent AS "pdfSent",
+        completed_at AS "completedAt",
+        created_at AS "createdAt"
+    `, [
+      id,
+      data.email,
+      data.firstName,
+      data.answers,
+      data.score,
+      data.outcomeId,
+      data.outcomeLabel,
+      data.paid,
+      data.amountPaidCents,
+      data.stripeSessionId,
+      new Date(),
+    ]);
+    if (row) return { submission: mapSubmission(row), newlyCompleted: true };
+    return { submission: await this.getSubmission(id), newlyCompleted: false };
+  }
+
   async updateSubmission(id: string, data: SubmissionUpdateInput): Promise<Submission | undefined> {
     const existing = await this.getSubmission(id);
     if (!existing) return undefined;
     const row = await this.queryOne<SubmissionRow>(`
       UPDATE submissions
       SET
-        paid = $2,
-        stripe_session_id = $3,
-        pdf_sent = $4,
-        completed_at = $5
+        email = $2,
+        first_name = $3,
+        answers = $4,
+        score = $5,
+        outcome_id = $6,
+        outcome_label = $7,
+        paid = $8,
+        amount_paid_cents = $9,
+        stripe_session_id = $10,
+        pdf_sent = $11,
+        completed_at = $12
       WHERE id = $1
       RETURNING
         id,
@@ -1097,13 +1394,21 @@ export class PgStorage implements IStorage {
         outcome_id AS "outcomeId",
         outcome_label AS "outcomeLabel",
         paid,
+        amount_paid_cents AS "amountPaidCents",
         stripe_session_id AS "stripeSessionId",
         pdf_sent AS "pdfSent",
         completed_at AS "completedAt",
         created_at AS "createdAt"
     `, [
       id,
+      data.email !== undefined ? data.email : existing.email,
+      data.firstName !== undefined ? data.firstName : existing.firstName,
+      data.answers !== undefined ? data.answers : existing.answers,
+      data.score !== undefined ? data.score : existing.score,
+      data.outcomeId !== undefined ? data.outcomeId : existing.outcomeId,
+      data.outcomeLabel !== undefined ? data.outcomeLabel : existing.outcomeLabel,
       data.paid ?? existing.paid,
+      data.amountPaidCents ?? existing.amountPaidCents,
       data.stripeSessionId !== undefined ? data.stripeSessionId : existing.stripeSessionId,
       data.pdfSent ?? existing.pdfSent,
       data.completedAt !== undefined ? data.completedAt : existing.completedAt,
@@ -1125,6 +1430,7 @@ export class PgStorage implements IStorage {
         outcome_id AS "outcomeId",
         outcome_label AS "outcomeLabel",
         paid,
+        amount_paid_cents AS "amountPaidCents",
         stripe_session_id AS "stripeSessionId",
         pdf_sent AS "pdfSent",
         completed_at AS "completedAt",
@@ -1149,6 +1455,7 @@ export class PgStorage implements IStorage {
         outcome_id AS "outcomeId",
         outcome_label AS "outcomeLabel",
         paid,
+        amount_paid_cents AS "amountPaidCents",
         stripe_session_id AS "stripeSessionId",
         pdf_sent AS "pdfSent",
         completed_at AS "completedAt",
@@ -1174,6 +1481,7 @@ export class PgStorage implements IStorage {
         outcome_id AS "outcomeId",
         outcome_label AS "outcomeLabel",
         paid,
+        amount_paid_cents AS "amountPaidCents",
         stripe_session_id AS "stripeSessionId",
         pdf_sent AS "pdfSent",
         completed_at AS "completedAt",

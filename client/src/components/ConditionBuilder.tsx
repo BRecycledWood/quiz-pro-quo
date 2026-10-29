@@ -16,7 +16,7 @@ const OPERATORS: Array<{ value: Condition["operator"]; label: string }> = [
 type QuestionKind = "yesno" | "number" | "select" | "text";
 
 function getQuestionKind(type: Question["type"] | undefined): QuestionKind {
-  if (type === "number") return "number";
+  if (type === "number" || type === "percent" || type === "scale_1_5" || type === "scale_1_10") return "number";
   if (type === "boolean" || type === "yesno" || type === "yes_no" || type === "true_false") return "yesno";
   if (type === "single" || type === "select" || type === "dropdown" || type === "multi") return "select";
   return "text";
@@ -71,7 +71,7 @@ export default function ConditionBuilder({
   return (
     <div className="space-y-3">
       {conditions.map((condition, index) => {
-        const question = questionMap.get(condition.questionId);
+        const question = condition.questionId ? questionMap.get(condition.questionId) : undefined;
         const kind = getQuestionKind(question?.type);
         const operator = condition.operator ?? "equals";
         const value = normalizeValue(condition.value);

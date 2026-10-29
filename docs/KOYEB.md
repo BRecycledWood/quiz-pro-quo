@@ -42,6 +42,7 @@ Required:
 
 - `NODE_ENV=production`
 - `PUBLIC_APP_URL=https://tryqpq.com`
+- `TRUST_PROXY_HOPS=1` (set to Koyeb's actual proxy topology)
 - `DATABASE_URL=<postgres connection string>`
 - `ADMIN_KEY=<long random secret>`
 - `SEED_DEMO_DATA=false`
@@ -49,6 +50,7 @@ Required:
 Optional:
 
 - `STRIPE_SECRET_KEY=<stripe secret key>`
+- `STRIPE_WEBHOOK_SECRET=<Stripe webhook signing secret>`
 - `SMTP_HOST=<smtp host>`
 - `SMTP_PORT=587`
 - `SMTP_SECURE=false`
@@ -57,7 +59,7 @@ Optional:
 - `EMAIL_FROM=<verified sender email>`
 - `LEAD_NOTIFICATION_EMAIL=<internal lead recipient>`
 
-Do not set `ALLOW_MEMORY_STORAGE=true` for first users. That flag is only for temporary non-persistent demos.
+For paid packs, register `https://tryqpq.com/api/stripe/webhook` for `checkout.session.completed` and `checkout.session.async_payment_succeeded`, and verify it using Stripe test mode before launch. Do not set `ALLOW_MEMORY_STORAGE=true` for first users; that flag is only for temporary non-persistent demos.
 
 ## Database
 

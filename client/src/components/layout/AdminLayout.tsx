@@ -1,16 +1,14 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, FileText, Settings, Users, BarChart3, LogOut, Plus } from "lucide-react";
+import { FileText, BarChart3, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
 
   const navItems = [
-    { href: "/admin", icon: LayoutDashboard, label: "Dashboard" },
-    { href: "/admin/quizzes", icon: FileText, label: "Quizzes" },
+    { href: "/admin", icon: FileText, label: "Packs" },
     { href: "/admin/analytics", icon: BarChart3, label: "Analytics" },
-    { href: "/admin/settings", icon: Settings, label: "Settings" },
   ];
 
   return (
@@ -52,7 +50,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               <p className="text-xs text-muted-foreground truncate">Org Admin</p>
             </div>
           </div>
-          <Button variant="outline" className="w-full justify-start gap-2" size="sm">
+          <Button
+            variant="outline"
+            className="w-full justify-start gap-2"
+            size="sm"
+            onClick={() => {
+              localStorage.removeItem("adminKey");
+              setLocation("/admin");
+            }}
+          >
             <LogOut className="w-4 h-4" />
             Sign Out
           </Button>
