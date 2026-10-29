@@ -1,19 +1,24 @@
-# Isolated Builder Studio staging service for PR #1.
-# In Render, select this file as the Blueprint path; do not use render.yaml.
+# Permanent, isolated Render staging for Builder Studio.
+# Choose this custom Blueprint path; do not apply the production render.yaml.
 services:
   - type: web
     name: quiz-pro-quo-builder-staging
     runtime: node
-    plan: free # Render Free web service; may sleep when idle.
+    plan: 0.5c-512mb # Smallest always-on web plan; currently $7/month.
     region: virginia
     branch: arena/686d76f2-quiz-pro-quo
     autoDeployTrigger: checksPass
+    numInstances: 1
     buildCommand: npm ci --include=dev && npm run build
+    preDeployCommand: npm run db:push
     startCommand: npm start
     healthCheckPath: /healthz
+    maxShutdownDelaySeconds: 30
     envVars:
       - key: NODE_ENV
         value: production
+      - key: STAGING_ENV
+        value: "true"
       - key: TRUST_PROXY_HOPS
         value: "1"
       - key: PUBLIC_APP_URL
@@ -22,14 +27,16 @@ services:
           name: quiz-pro-quo-builder-staging
           envVarKey: RENDER_EXTERNAL_URL
       - key: DATABASE_URL
-        sync: false # Paste the isolated Neon Free Postgres connection string in Render.
+        fromDatabase:
+          name: quiz-pro-quo-builder-staging-db
+          property: connectionString
       - key: ADMIN_KEY
         generateValue: true
       - key: DISABLE_EXTERNAL_SIDE_EFFECTS
         value: "true"
       - key: SEED_DEMO_DATA
         value: "false"
-      # Explicitly keep real payments and email delivery disabled in staging.
+      # Hard-off switch plus blank values: no Stripe calls, webhooks, or SMTP.
       - key: STRIPE_SECRET_KEY
         value: ""
       - key: STRIPE_WEBHOOK_SECRET
@@ -49,6 +56,13 @@ services:
       - key: LEAD_NOTIFICATION_EMAIL
         value: ""
 
-# Neon Free Postgres is intentionally external to this Blueprint. Create one
-# isolated Neon project/database and add its connection string as DATABASE_URL
-# in the Render service environment. Production render.yaml is unchanged.
+databases:
+  - name: quiz-pro-quo-builder-staging-db
+    databaseName: quiz_pro_quo_staging
+    user: quiz_pro_quo_staging
+    postgresMajorVersion: "16"
+    plan: 0.1c-256mb # Smallest paid Postgres plan; currently $6/month.
+    diskSizeGB: 1
+    storageAutoscalingEnabled: false
+    region: virginia
+    ipAllowList: [] # Internal Render connections only; no public DB access.

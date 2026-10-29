@@ -21,6 +21,7 @@ const childEnv = { ...process.env };
 delete childEnv.DATABASE_URL;
 Object.assign(childEnv, {
   NODE_ENV: "production",
+  STAGING_ENV: "true",
   ALLOW_MEMORY_STORAGE: "true",
   ADMIN_KEY: "production-smoke-admin-key-at-least-32-characters",
   PUBLIC_APP_URL: "https://qpp-smoke.example",
@@ -61,6 +62,7 @@ try {
   assert.equal(healthResponse.status, 200);
   assert.equal(healthResponse.headers.get("x-content-type-options"), "nosniff");
   assert.equal(healthResponse.headers.get("x-frame-options"), "DENY");
+  assert.equal(healthResponse.headers.get("x-robots-tag"), "noindex, nofollow, noarchive");
   const health = await healthResponse.json() as {
     ok: boolean;
     storage: string;
@@ -76,8 +78,13 @@ try {
 
   const homepage = await fetch(`http://127.0.0.1:${port}/`);
   assert.equal(homepage.status, 200);
+  assert.equal(homepage.headers.get("x-robots-tag"), "noindex, nofollow, noarchive");
   assert.match(await homepage.text(), /<div id="root"><\/div>/);
-  console.log("Production startup smoke passed using explicitly enabled in-memory storage.");
+
+  const robots = await fetch(`http://127.0.0.1:${port}/robots.txt`);
+  assert.equal(robots.status, 200);
+  assert.equal(await robots.text(), "User-agent: *\nDisallow: /\n");
+  console.log("Production startup and staging no-index smoke passed using explicitly enabled in-memory storage.");
 } finally {
   if (child.exitCode === null && child.signalCode === null) {
     child.kill("SIGTERM");

@@ -1,6 +1,6 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
-import { storage } from "./storage";
+import { PgStorage, storage } from "./storage";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { isVercelStudioPreviewAuthEnabled } from "./preview-auth";
@@ -38,6 +38,7 @@ if (process.env.NODE_ENV === "production") {
 
 const app = express();
 export default app;
+const stagingEnvironment = process.env.STAGING_ENV === "true";
 app.disable("x-powered-by");
 const trustProxyHops = process.env.TRUST_PROXY_HOPS === undefined
   ? process.env.NODE_ENV === "production" ? 1 : 0
@@ -51,6 +52,9 @@ app.use((_req, res, next) => {
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (stagingEnvironment) {
+    res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+  }
   if (process.env.NODE_ENV === "production") {
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   }
@@ -81,6 +85,12 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false, limit: "100kb" }));
+
+if (stagingEnvironment) {
+  app.get("/robots.txt", (_req, res) => {
+    res.type("text/plain").send("User-agent: *\nDisallow: /\n");
+  });
+}
 
 app.get("/healthz", async (_req, res) => {
   const storageType = process.env.DATABASE_URL ? "postgres" : "memory";
@@ -160,7 +170,46 @@ appReady = (async () => {
 // Vercel invokes the exported Express app directly. Keep the long-lived listener
 // for local/Render deployments, but never open a port inside a Vercel Function.
 if (process.env.VERCEL !== "1") {
+  let shuttingDown = false;
+  const shutdown = (signal: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log(`Received ${signal}; draining HTTP server.`);
+    if (!httpServer.listening) {
+      log("HTTP listener is not active; exiting.");
+      process.exit(0);
+    }
+    const shutdownTimeout = setTimeout(() => {
+      console.error("Graceful shutdown deadline exceeded.");
+      process.exit(1);
+    }, 25_000);
+    shutdownTimeout.unref();
+    httpServer.close((error) => {
+      void (async () => {
+        let shutdownFailed = Boolean(error);
+        if (error) console.error("HTTP server shutdown failed.");
+        if (storage instanceof PgStorage) {
+          try {
+            await storage.close();
+          } catch {
+            shutdownFailed = true;
+            console.error("Database pool shutdown failed.");
+          }
+        }
+        clearTimeout(shutdownTimeout);
+        if (shutdownFailed) {
+          process.exitCode = 1;
+        } else {
+          log("HTTP server and database pool drained.");
+        }
+      })();
+    });
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
+
   appReady.then(() => {
+    if (shuttingDown) return;
     const port = Number(process.env.PORT) || 3000;
     const hasHostEnv = typeof process.env.HOST === "string" && process.env.HOST.length > 0;
     log(`startup port=${port} hostEnvPresent=${hasHostEnv}`);
