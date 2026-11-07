@@ -1,0 +1,21 @@
+name: protocol-gate
+# Zero-False-Completion Protocol v1.0: every PR commit needs a Status trailer, and the PR
+# description needs Status (and Evidence when VERIFIED). Server-side backstop for local hooks.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check commits and PR description
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 .github/protocol_check.py ci
