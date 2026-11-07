@@ -1,0 +1,90 @@
+{
+  "version": "1.0",
+  "source": "Agent Operating Standards | Zero-False-Completion Protocol v1.0 (Notion, HOWstud.io HQ)",
+  "enforce_after_epoch": 1794078854,
+  "status_words": [
+    "VERIFIED",
+    "IMPLEMENTED BUT UNVERIFIED",
+    "ASSUMED",
+    "INCOMPLETE"
+  ],
+  "completion_claim_patterns": [
+    "\\b(?:i|we)(?:'ve| have)?\\s+(?:now\\s+)?(?:fixed|finished|completed|shipped|deployed|implemented|resolved|installed|set up|got it working)\\b",
+    "\\b(?:(?:it|this|that|everything)(?:'s| is| are)|all)\\s+(?:now\\s+)?(?:done|fixed|ready|complete|completed|finished|working|live|good to go|all set)\\b",
+    "\\b(?:is|are)\\s+now\\s+(?:working|live|fixed|ready|complete|done|installed|enabled)\\b",
+    "\\b(?:all done|all set|good to go|task complete|work is complete|fully (?:working|functional|implemented))\\b",
+    "\\u2705",
+    "(?:^|[.!?\\n]\\s*)(?:done|finished|complete|completed|fixed|shipped|resolved|ready)\\s*[.!]+(?:\\s|$)"
+  ],
+  "evidence_placeholders": [
+    "n/a",
+    "na",
+    "none",
+    "tested",
+    "ok",
+    "okay",
+    "see above",
+    "works",
+    "done",
+    "verified",
+    "todo",
+    "tbd",
+    "yes",
+    "-"
+  ],
+  "evidence_min_chars": 15,
+  "canonical_projects_dir": "~/HOWSTUDIO/01_PROJECTS",
+  "banned_project_dirs": [
+    "~/Documents/Codex",
+    "~/.codex",
+    "~/.cache/codex-runtimes"
+  ],
+  "protected_branches": [
+    "main",
+    "master",
+    "production"
+  ],
+  "forbidden_command_patterns": [
+    {
+      "pattern": "--no-verify",
+      "why": "Skips the protocol git hooks."
+    },
+    {
+      "pattern": "git\\s+commit\\b[^\\n]*\\s-[a-zA-Z]*n[a-zA-Z]*(\\s|$)",
+      "why": "git commit -n is --no-verify."
+    },
+    {
+      "pattern": "git\\s+push\\b(?=[^\\n]*\\s(?:--force(?!-with-lease)\\b|-f\\b))",
+      "why": "Force-push can erase approved work (rule 3). Use --force-with-lease after Brad approves."
+    },
+    {
+      "pattern": "hermes\\s+gateway\\s+restart\\b[^\\n]*--interrupt",
+      "why": "Kills a running turn. Restart only when no turn is active."
+    },
+    {
+      "pattern": "PROTOCOL_BYPASS\\s*=",
+      "why": "Only Brad may bypass the protocol hooks."
+    }
+  ],
+  "secret_patterns": [
+    "-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----",
+    "AKIA[0-9A-Z]{16}",
+    "gh[pousr]_[A-Za-z0-9]{36,}",
+    "github_pat_[A-Za-z0-9_]{50,}",
+    "\\bsk-[A-Za-z0-9_-]{20,}",
+    "\\b[sr]k_live_[A-Za-z0-9]{16,}",
+    "xox[baprs]-[A-Za-z0-9-]{10,}",
+    "AIza[0-9A-Za-z_-]{35}",
+    "(?i)(?:api[_-]?key|secret|token|passwd|password)\\s*[:=]\\s*['\\\"][A-Za-z0-9/+_=.-]{16,}['\\\"]"
+  ],
+  "secret_allow_marker": "protocol-allow-secret",
+  "secret_filenames": [
+    "(^|/)\\.env(\\.(?!example|sample|template)[^/]*)?$",
+    "ghl-creds",
+    "_2fa",
+    "api-keys",
+    "(^|/)id_(rsa|ed25519)$",
+    "\\.pem$",
+    "credentials\\.json$"
+  ]
+}
